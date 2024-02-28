@@ -1,0 +1,3 @@
+h5py
+sv_ttk
+setuptools
