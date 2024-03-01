@@ -267,6 +267,7 @@ class HDFViewer:
         self.tree.heading("name", text="Name")
         self.tree.heading("value", text="Value")
         self.tree.bind("<<TreeviewSelect>>", self.tree_select)
+        self.tree.bind("<Double-1>", self.on_double_click)
 
         "----------- TextBox -----------"
         frm = ttk.Frame(main)
@@ -308,6 +309,12 @@ class HDFViewer:
         if addresses:
             out = load_address(self.filepath.get(), addresses[0])
             self.text.insert('1.0', out)
+
+    def on_double_click(self, event=None):
+        addresses = [self.tree.item(item)["values"][1] for item in self.tree.selection()]
+        if addresses and addresses[0] == 'data':
+            from .hdf_image_gui import HDFImageViewer
+            HDFImageViewer(self.filepath.get())
 
     def select_file(self, event=None):
         filename = select_hdf_file(self.root)
