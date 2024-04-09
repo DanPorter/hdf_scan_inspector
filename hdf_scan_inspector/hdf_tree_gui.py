@@ -21,36 +21,29 @@ Diamond Light Source Ltd
 2024
 """
 
-import os
 import h5py
 import time
 import tkinter as tk
 from tkinter import ttk
-from tkinter import filedialog
-from tkinter import messagebox
 import sv_ttk
 
 
-# Version
-__version__ = '0.1.0'
-__date__ = '2024-02-28'
-
-
-def address_name(address):
-    """Convert hdf address to name"""
-    name = os.path.basename(address)
-    return os.path.basename(name) if name == 'value' else name
+from hdf_scan_inspector.functions import create_root, topmenu, select_hdf_file, open_close_all_tree, \
+    address_name, eval_hdf
 
 
 def load_address(hdf_filename, address):
     """Generate string describing object in hdf file"""
     with h5py.File(hdf_filename, 'r') as hdf:
         obj = hdf.get(address)
-        link = hdf.get(address, getlink=True)
+        try:
+            link = repr(hdf.get(address, getlink=True))
+        except RuntimeError:
+            link = 'No link'
         myclass = hdf.get(address, getclass=True)
         out = f"{obj.name}\n"
         out += f"{repr(obj)}\n"
-        out += f"{repr(link)}\n"
+        out += f"{link}\n"
         out += f"{repr(myclass)}\n"
         out += '\nattrs:\n'
         out += '\n'.join([f"{key}: {obj.attrs[key]}" for key in obj.attrs])
@@ -99,15 +92,10 @@ def populate_tree(treeview, hdf_filename, openstate=True):
                 treeview.insert(tree_group, tk.END, text=address, values=values)
 
     with h5py.File(hdf_filename, 'r') as hdf:
+        # add top level file group
+        treeview.insert("", tk.END, text='/', values=('File', address_name(hdf_filename), ''))
         recur_func(hdf, "")
     return datasets
-
-
-def open_close_all_tree(treeview, branch="", openstate=True):
-    """Open or close all items in ttk.treeview"""
-    treeview.item(branch, open=openstate)
-    for child in treeview.get_children(branch):
-        open_close_all_tree(treeview, child, openstate)  # recursively open children
 
 
 def search_tree(treeview, branch="", query="entry", match_case=False, whole_word=False):
@@ -131,43 +119,6 @@ def search_tree(treeview, branch="", query="entry", match_case=False, whole_word
             treeview.see(child)
 
 
-def topmenu(root, menu_dict):
-    """
-    Add a file menu to root
-    :param root: tkinter root
-    :param menu_dict: {Menu name: {Item name: function}}
-    :return: None
-    """
-    """Setup menubar"""
-    menubar = tk.Menu(root)
-
-    for item in menu_dict:
-        men = tk.Menu(menubar, tearoff=0)
-        for label, function in menu_dict[item].items():
-            men.add_command(label=label, command=function)
-        menubar.add_cascade(label=item, menu=men)
-    root.config(menu=menubar)
-
-
-def select_hdf_file(parent):
-    """Select HDF file using filedialog"""
-    filename = filedialog.askopenfilename(
-        title='Select file to open',
-        filetypes=[('NXS file', '.nxs'),
-                   ('HDF file', '.h5'), ('HDF file', '.hdf'), ('HDF file', '.hdf5'),
-                   ('All files', '.*')],
-        parent=parent
-    )
-    if filename and not h5py.is_hdf5(filename):
-        messagebox.showwarning(
-            title='Incorrect File Type',
-            message=f"File: \n{filename}\n can't be read by h5py",
-            parent=parent
-        )
-        filename = None
-    return filename
-
-
 class HDFViewer:
     """
     HDF Viewer - display cascading hierarchical data within HDF file in ttk GUI
@@ -179,24 +130,28 @@ class HDFViewer:
      - Click on a dataset or group to view stored attributes and data
 
     :param hdf_filename: str or None*, if str opens this file initially
+    :param parent: tk root
     """
 
-    def __init__(self, hdf_filename=None):
+    def __init__(self, hdf_filename=None, parent=None):
 
-        # Create Tk inter instance
-        self.root = tk.Tk()
-        self.root.wm_title('HDF Reader')
-        # self.root.minsize(width=640, height=480)
-        self.root.maxsize(width=self.root.winfo_screenwidth(), height=self.root.winfo_screenheight())
+        self.root = create_root('HDF Reader', parent=parent)
 
         # Variables
-        self.dataset_list = []
+        self.dataset_list = []  # not currently used
+        self.filepath = tk.StringVar(self.root, '')
+        self.expandall = tk.BooleanVar(self.root, True)
+        self.expression_box = tk.StringVar(self.root, '')
+        self.search_box = tk.StringVar(self.root, '')
+        self.search_matchcase = tk.BooleanVar(self.root, False)
+        self.search_wholeword = tk.BooleanVar(self.root, True)
 
         "----------- MENU -----------"
         menu = {
             'File': {
                 'Select File': self.select_file,
                 'Reload': self.populate_tree,
+                'Open image GUI': self.menu_image_gui,
             },
             'HDF': {
                 'Expand all': self.menu_expand_all,
@@ -211,87 +166,130 @@ class HDFViewer:
         topmenu(self.root, menu)
 
         "----------- BROWSE -----------"
+        self.ini_browse()
+
+        "----------- SEARCH -----------"
+        self.ini_search()
+
+        "-------- EXPRESSION ----------"
+        self.ini_expression()
+
+        "----------- TreeView -----------"
+        self.tree, self.text = self.ini_treeview()
+
+        "-------- Start Mainloop ------"
+        if hdf_filename:
+            self.filepath.set(hdf_filename)
+            self.populate_tree()
+        if parent is None:
+            sv_ttk.use_light_theme()
+            self.root.mainloop()
+
+    "======================================================"
+    "================= init functions ====================="
+    "======================================================"
+
+    def ini_browse(self):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
-        var = ttk.Button(frm, text='Browse', command=self.select_file)
+        var = ttk.Button(frm, text='Browse', command=self.select_file, width=10)
         var.pack(side=tk.LEFT)
 
-        self.filepath = tk.StringVar(self.root, '')
         var = ttk.Entry(frm, textvariable=self.filepath)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        self.expandall = tk.BooleanVar(self.root, True)
         var = ttk.Checkbutton(frm, variable=self.expandall, text='Expand', command=self.check_expand)
         var.pack(side=tk.LEFT)
 
-        "----------- SEARCH -----------"
+    def ini_search(self):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
-        self.search_box = tk.StringVar(self.root, '')
+        var = ttk.Button(frm, text='Search', command=self.fun_search, width=10)
+        var.pack(side=tk.LEFT)
+
         var = ttk.Entry(frm, textvariable=self.search_box)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
         # var.bind('<KeyRelease>', self.fun_search)
         var.bind('<Return>', self.fun_search)
         var.bind('<KP_Enter>', self.fun_search)
 
-        self.search_matchcase = tk.BooleanVar(self.root, False)
-        self.search_wholeword = tk.BooleanVar(self.root, True)
         var = ttk.Checkbutton(frm, variable=self.search_matchcase, text='Case')
         var.pack(side=tk.LEFT)
         var = ttk.Checkbutton(frm, variable=self.search_wholeword, text='Word')
         var.pack(side=tk.LEFT)
 
-        "----------- TreeView -----------"
+    def ini_expression(self):
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Button(frm, text='Expression', command=self.fun_expression, width=10)
+        var.pack(side=tk.LEFT)
+
+        var = ttk.Entry(frm, textvariable=self.expression_box)
+        var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        # var.bind('<KeyRelease>', self.fun_expression_reset)
+        var.bind('<Return>', self.fun_expression)
+        var.bind('<KP_Enter>', self.fun_expression)
+
+    def ini_treeview(self):
+        """Return tktreeview, tktext"""
         main = ttk.Frame(self.root)
         main.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         frm = ttk.Frame(main)
         frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        self.tree = ttk.Treeview(frm, columns=('type', 'name', 'value'), selectmode='browse')
-        self.tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        tree = ttk.Treeview(frm, columns=('type', 'name', 'value'), selectmode='browse')
+        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        var = ttk.Scrollbar(frm, orient="vertical", command=self.tree.yview)
+        var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
         var.pack(side=tk.LEFT, fill=tk.Y)
-        self.tree.configure(yscrollcommand=var.set)
+        tree.configure(yscrollcommand=var.set)
 
         # Populate tree
-        self.tree.heading("#0", text="HDF Address")
-        self.tree.column("#0", minwidth=50, width=400)
-        self.tree.column("type", width=100, anchor='c')
-        self.tree.column("name", width=100, anchor='c')
-        self.tree.column("value", width=200, anchor='c')
-        self.tree.heading("type", text="Type")
-        self.tree.heading("name", text="Name")
-        self.tree.heading("value", text="Value")
-        self.tree.bind("<<TreeviewSelect>>", self.tree_select)
-        self.tree.bind("<Double-1>", self.on_double_click)
+        tree.heading("#0", text="HDF Address")
+        tree.column("#0", minwidth=50, width=400)
+        tree.column("type", width=100, anchor='c')
+        tree.column("name", width=100, anchor='c')
+        tree.column("value", width=200, anchor='c')
+        tree.heading("type", text="Type")
+        tree.heading("name", text="Name")
+        tree.heading("value", text="Value")
+        tree.bind("<<TreeviewSelect>>", self.tree_select)
+        tree.bind("<Double-1>", self.on_double_click)
 
         "----------- TextBox -----------"
         frm = ttk.Frame(main)
         frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        self.text = tk.Text(frm, wrap=tk.NONE, width=40)
-        self.text.pack(fill=tk.BOTH, expand=tk.YES)
+        text = tk.Text(frm, wrap=tk.NONE, width=50)
+        text.pack(fill=tk.BOTH, expand=tk.YES)
 
         var = tk.Scrollbar(frm, orient=tk.HORIZONTAL)
         var.pack(side=tk.BOTTOM, fill=tk.X)
-        var.config(command=self.text.xview)
+        var.config(command=text.xview)
 
-        "-------------------------Start Mainloop------------------------------"
-        if hdf_filename:
-            self.filepath.set(hdf_filename)
-            self.populate_tree()
-        sv_ttk.use_light_theme()
-        self.root.mainloop()
+        return tree, text
+
+    "======================================================"
+    "================= menu functions ====================="
+    "======================================================"
 
     def menu_expand_all(self):
         open_close_all_tree(self.tree, "", True)
 
     def menu_collapse_all(self):
         open_close_all_tree(self.tree, "", False)
+
+    def menu_image_gui(self):
+        from .hdf_image_gui import HDFImageViewer
+        HDFImageViewer(self.filepath.get(), parent=self.root)
+
+    "======================================================"
+    "================ general functions ==================="
+    "======================================================"
 
     def check_expand(self):
         open_close_all_tree(self.tree, "", self.expandall.get())
@@ -302,6 +300,10 @@ class HDFViewer:
     def populate_tree(self):
         self._delete_tree()
         self.dataset_list = populate_tree(self.tree, self.filepath.get(), self.expandall.get())
+
+    "======================================================"
+    "================= event functions ===================="
+    "======================================================"
 
     def tree_select(self, event=None):
         self.text.delete('1.0', tk.END)
@@ -314,7 +316,7 @@ class HDFViewer:
         addresses = [self.tree.item(item)["values"][1] for item in self.tree.selection()]
         if addresses and addresses[0] == 'data':
             from .hdf_image_gui import HDFImageViewer
-            HDFImageViewer(self.filepath.get())
+            HDFImageViewer(self.filepath.get(), parent=self.root)
 
     def select_file(self, event=None):
         filename = select_hdf_file(self.root)
@@ -332,6 +334,18 @@ class HDFViewer:
             whole_word=self.search_wholeword.get()
         )
 
+    def fun_expression(self, event=None):
+        self.text.delete('1.0', tk.END)
+        expression = self.expression_box.get()
+        out_str = f">>> {expression}\n"
+        try:
+            with h5py.File(self.filepath.get(), 'r') as hdf:
+                out = eval_hdf(hdf, expression)
+        except NameError as ne:
+            out = ne
+        out_str += f"{out}"
+        self.text.insert('1.0', out_str)
+
 
 class HDFSelector:
     """
@@ -345,68 +359,85 @@ class HDFSelector:
     :param message: str message to display
     """
 
-    def __init__(self, hdf_filename, message=""):
+    def __init__(self, hdf_filename, message="", parent=None):
 
-        # Create Tk inter instance
-        self.root = tk.Tk()
-        self.root.wm_title('HDF Dataset Selector')
-        # self.root.minsize(width=640, height=480)
-        self.root.maxsize(width=self.root.winfo_screenwidth(), height=self.root.winfo_screenheight())
+        self.root = create_root('HDF Dataset Selector', parent=parent)
+
+        # parameters + variables
         self.output = ""
         self.search_str = ""
         self.search_time = time.time()
         self.search_reset = 3.0  # seconds
+        self.filepath = tk.StringVar(self.root, hdf_filename)
+        self.expandall = tk.BooleanVar(self.root, False)
 
         "----------- Message -----------"
+        self.ini_message(message)
+
+        "----------- FilePath -----------"
+        self.ini_filepath()
+
+        "----------- TreeView -----------"
+        self.tree = self.ini_treeview()
+
+        "--------- Start Mainloop -------"
+        populate_tree(self.tree, hdf_filename, False)
+        self.root.bind_all('<KeyPress>', self.on_key_press)
+        if parent is None:
+            sv_ttk.use_light_theme()
+            # self.root.mainloop()
+
+    "======================================================"
+    "================= init functions ====================="
+    "======================================================"
+
+    def ini_message(self, message):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         var = ttk.Label(frm, text=message, font=('TkHeadingFont', 12, "bold italic"))
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH, padx=6, pady=6)
 
-        "----------- FilePath -----------"
+    def ini_filepath(self):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
-        self.filepath = tk.StringVar(self.root, hdf_filename)
         var = ttk.Entry(frm, textvariable=self.filepath, state="readonly")
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        self.expandall = tk.BooleanVar(self.root, False)
         var = ttk.Checkbutton(frm, variable=self.expandall, text='Expand', command=self.check_expand)
         var.pack(side=tk.LEFT)
 
-        "----------- TreeView -----------"
+    def ini_treeview(self):
+        """return tkTreeView"""
         main = ttk.Frame(self.root)
         main.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         frm = ttk.Frame(main)
         frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        self.tree = ttk.Treeview(frm, columns=('type', 'name', 'value'), selectmode='browse')
-        self.tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        tree = ttk.Treeview(frm, columns=('type', 'name', 'value'), selectmode='browse')
+        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        var = ttk.Scrollbar(frm, orient="vertical", command=self.tree.yview)
+        var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
         var.pack(side=tk.LEFT, fill=tk.Y)
-        self.tree.configure(yscrollcommand=var.set)
+        tree.configure(yscrollcommand=var.set)
 
         # Populate tree
-        self.tree.heading("#0", text="HDF Address")
-        self.tree.column("#0", minwidth=50, width=400)
-        self.tree.column("type", width=100, anchor='c')
-        self.tree.column("name", width=100, anchor='c')
-        self.tree.column("value", width=200, anchor='c')
-        self.tree.heading("type", text="Type")
-        self.tree.heading("name", text="Name")
-        self.tree.heading("value", text="Value")
-        self.tree.bind("<Double-1>", self.on_double_click)
+        tree.heading("#0", text="HDF Address")
+        tree.column("#0", minwidth=50, width=400)
+        tree.column("type", width=100, anchor='c')
+        tree.column("name", width=100, anchor='c')
+        tree.column("value", width=200, anchor='c')
+        tree.heading("type", text="Type")
+        tree.heading("name", text="Name")
+        tree.heading("value", text="Value")
+        tree.bind("<Double-1>", self.on_double_click)
+        return tree
 
-        populate_tree(self.tree, hdf_filename, False)
-        self.root.bind_all('<KeyPress>', self.on_key_press)
-
-        "-------------------------Start Mainloop------------------------------"
-        sv_ttk.use_light_theme()
-        # self.root.mainloop()
+    "======================================================"
+    "================= event functions ===================="
+    "======================================================"
 
     def check_expand(self):
         open_close_all_tree(self.tree, "", self.expandall.get())
@@ -439,19 +470,23 @@ class HDFSelector:
             obj = hdf.get(address)
             if isinstance(obj, h5py.Dataset):
                 self.output = address
-                self.root.destroy()
+                self.root.destroy()  # trigger wait_window
 
     def show(self):
+        """Launches window, returns selection"""
         self.root.wait_window()  # wait for window
+        self.root.unbind_all('<KeyPress>')
+        self.root.destroy()
         return self.output
 
 
-def dataset_selector(hdf_filename, message=''):
+def dataset_selector(hdf_filename, message='', parent=None):
     """
     Wrapper for HDFSelector
     Double-click a dataset to return str address from hdf file
     :param hdf_filename: str filename of HDF file
     :param message: str message to display
+    :param parent: Tk root class
     :return hdf_address: str address
     """
-    return HDFSelector(hdf_filename, message).show()
+    return HDFSelector(hdf_filename, message, parent).show()

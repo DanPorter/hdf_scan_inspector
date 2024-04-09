@@ -1,22 +1,30 @@
 """
-ImageGui
+HDF Scan Inspector - Image GUI
+
+By Dan Porter
+Diamond Light Source Ltd
+2024
 """
 
-import os
 import h5py
 import numpy as np
+from imageio import imread
 import tkinter as tk
 from tkinter import ttk
-from tkinter import filedialog
-from tkinter import messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk as NavigationToolbar2TkAgg
 import sv_ttk
 
-from hdf_scan_inspector.hdf_tree_gui import dataset_selector, select_hdf_file, topmenu, HDFViewer
+from hdf_scan_inspector.hdf_tree_gui import dataset_selector, HDFViewer
+from hdf_scan_inspector.functions import create_root, topmenu, select_hdf_file, show_error, address_name, \
+    get_nexus_axes_address
 
-_figure_size = [14, 6]
+FIGURE_SIZE = [14, 6]
+AXES = ['axis 1', 'axis 2', 'axis 3']
+COLORMAPS = ['viridis', 'Spectral', 'plasma', 'inferno', 'Greys', 'Blues', 'winter', 'autumn',
+             'hot', 'hot_r', 'hsv', 'rainbow', 'jet', 'twilight', 'hsv']
+DEFAULT_COLORMAP = 'twilight'
 
 
 def dataset_shape(dataset):
@@ -55,6 +63,23 @@ def get_image(dataset, image_number, axis=0):
     return dataset[index_slice].reshape(shape)
 
 
+def get_image_from_files(image_filenames, image_number, axis=0):
+    """
+    Load a single image from a list of image files (e.g. .tif)
+    :param image_filenames: list of str
+    :param image_number: int
+    :param axis:
+    :return:
+    """
+    if axis == 0:
+        # return single image
+        return imread(image_filenames[image_number])
+    if axis == 1:
+        # return image of slice of each image
+        return np.array([imread(f)[image_number, :] for f in image_filenames])
+    return np.array([imread(f)[:, image_number] for f in image_filenames])
+
+
 def get_hdf_image(hdf_filename, address, image_number, axis=0):
     """
     Load a single image from a dataset in a HDF file, on a given axis
@@ -68,6 +93,23 @@ def get_hdf_image(hdf_filename, address, image_number, axis=0):
         dataset = hdf.get(address)
         image = get_image(dataset, image_number, axis)
     return image
+
+
+def get_hdf_value(hdf_filename, address, image_number):
+    """
+    Load a single value from a dataset in a HDF file
+    :param hdf_filename: str filename of HDF file
+    :param address: str HDF address of 3D dataset
+    :param image_number: index of the dataset
+    :return: float
+    """
+    with h5py.File(hdf_filename, 'r') as hdf:
+        if not address:
+            return 0
+        dataset = hdf.get(address)
+        if dataset and image_number < len(dataset):
+            return dataset[image_number]
+    return 0
 
 
 def get_hdf_image_address(hdf_filename):
@@ -94,7 +136,7 @@ def get_hdf_image_address(hdf_filename):
     return image_address
 
 
-def check_dataset(hdf_filename, address):
+def check_image_dataset(hdf_filename, address):
     """
     Check dataset exists and is correct shape for image use
     :param hdf_filename: str filepath of HDF file
@@ -117,16 +159,6 @@ def check_dataset(hdf_filename, address):
     return ""
 
 
-def show_error(message, parent=None):
-    """Display and raise error"""
-    messagebox.showwarning(
-        title="HDF File Error",
-        message=message,
-        parent=parent,
-    )
-    raise Exception(message)
-
-
 class HDFImageViewer:
     """
     HDF Image Viewer - display a 3+D dataset as a series of images
@@ -139,24 +171,22 @@ class HDFImageViewer:
     :param figure_dpi: int describes the default size of the GUI
     """
 
-    def __init__(self, hdf_filename="", figure_dpi=100):
+    def __init__(self, hdf_filename="", figure_dpi=100, parent=None):
 
-        # Create Tk inter instance
-        self.root = tk.Tk()
-        self.root.wm_title('HDF Image Viewer')
-        # self.root.minsize(width=640, height=480)
-        self.root.maxsize(width=self.root.winfo_screenwidth(), height=self.root.winfo_screenheight())
+        self.root = create_root('HDF Image Viewer', parent=parent)
 
         # Variables
         self.filepath = tk.StringVar(self.root, hdf_filename)
         self.address = tk.StringVar(self.root, '')
+        self.axis_address = tk.StringVar(self.root, '')
         self.error_message = ""
-        _axes = ['axis 1', 'axis 2', 'axis 3']
         self._ax = 0
         self._x_axis = 1
         self._y_axis = 2
-        self.view_axis = tk.StringVar(self.root, _axes[self._ax])
+        self.view_axis = tk.StringVar(self.root, AXES[self._ax])
         self.view_index = tk.IntVar(self.root, 0)
+        self.axis_name = tk.StringVar(self.root, 'axis = ')
+        self.axis_value = tk.DoubleVar(self.root, 0)
         self.add_phase = tk.DoubleVar(self.root, 0)
         self.logplot = tk.BooleanVar(self.root, False)
         self.difplot = tk.BooleanVar(self.root, False)
@@ -164,9 +194,7 @@ class HDFImageViewer:
         self.cmin = tk.DoubleVar(self.root, 0)
         self.cmax = tk.DoubleVar(self.root, 1)
         self.fixclim = tk.BooleanVar(self.root, False)
-        self.colormap = tk.StringVar(self.root, 'twilight')
-        all_colormaps = ['viridis', 'Spectral', 'plasma', 'inferno', 'Greys', 'Blues', 'winter', 'autumn',
-                         'hot', 'hot_r', 'hsv', 'rainbow', 'jet', 'twilight', 'hsv']
+        self.colormap = tk.StringVar(self.root, DEFAULT_COLORMAP)
 
         "----------- MENU -----------"
         menu = {
@@ -179,12 +207,40 @@ class HDFImageViewer:
             'Theme': {
                 'Dark': sv_ttk.use_dark_theme,
                 'Light': sv_ttk.use_light_theme,
+                'Make small': self.menu_makesmall,
             }
         }
 
         topmenu(self.root, menu)
 
         "----------- Browse -----------"
+        self.ini_browse()
+
+        "----------- Dataset -----------"
+        self.ini_dataset()
+        self.ini_xaxis()
+
+        "----------- Options -----------"
+        self.ini_options()
+
+        "----------- Slider -----------"
+        self.tkscale = self.ini_slider()
+
+        "----------- Image -----------"
+        self.fig, self.ax1, self.ax1_image, self.cb1, self.toolbar = self.ini_image(figure_dpi)
+
+        "-------- Start Mainloop ------"
+        if hdf_filename:
+            self._loadfile(hdf_filename)
+        if parent is None:
+            sv_ttk.use_light_theme()
+            self.root.mainloop()
+
+    "======================================================"
+    "================= init functions ====================="
+    "======================================================"
+
+    def ini_browse(self):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
@@ -196,17 +252,25 @@ class HDFImageViewer:
         var.bind('<Return>', self.loadfile)
         var.bind('<KP_Enter>', self.loadfile)
 
-        "----------- Dataset -----------"
+    def ini_dataset(self):
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
-        var = ttk.Button(frm, text='Dataset', command=self.select_dataset)
+        var = ttk.Button(frm, text='Image Dataset', command=self.select_dataset)
         var.pack(side=tk.LEFT)
 
         var = ttk.Entry(frm, textvariable=self.address)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        "----------- Options -----------"
+    def ini_xaxis(self):
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+        var = ttk.Button(frm, text='Value Dataset', command=self.select_axis_dataset)
+        var.pack(side=tk.LEFT)
+        var = ttk.Entry(frm, textvariable=self.axis_address)
+        var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+
+    def ini_options(self):
         frm = ttk.LabelFrame(self.root, text='Options', relief=tk.RIDGE)
         frm.pack(expand=tk.NO, pady=2, padx=5)
 
@@ -222,7 +286,7 @@ class HDFImageViewer:
         var.bind('<Return>', self.update_image)
         var.bind('<KP_Enter>', self.update_image)
 
-        var = ttk.OptionMenu(frm, self.colormap, *all_colormaps, command=self.update_image)
+        var = ttk.OptionMenu(frm, self.colormap, *COLORMAPS, command=self.update_image)
         var.pack(side=tk.LEFT)
 
         var = ttk.Label(frm, text='clim:')
@@ -238,11 +302,11 @@ class HDFImageViewer:
         var = ttk.Checkbutton(frm, text='Fix', variable=self.fixclim)
         var.pack(side=tk.LEFT)
 
-        "----------- Slider -----------"
+    def ini_slider(self):
         frm = ttk.Frame(self.root)
         frm.pack(expand=tk.NO, pady=2, padx=5)
 
-        var = ttk.OptionMenu(frm, self.view_axis, None, *_axes, command=self.update_axis)
+        var = ttk.OptionMenu(frm, self.view_axis, None, *AXES, command=self.update_axis)
         var.pack(side=tk.LEFT)
 
         def inc():
@@ -257,10 +321,10 @@ class HDFImageViewer:
         var.pack(side=tk.LEFT)
         var = ttk.Button(frm, text='-', command=dec)
         var.pack(side=tk.LEFT)
-        self.tkscale = ttk.Scale(frm, from_=0, to=100, variable=self.view_index, orient=tk.HORIZONTAL,
-                                 command=self.update_image, length=300)
+        tkscale = ttk.Scale(frm, from_=0, to=100, variable=self.view_index, orient=tk.HORIZONTAL,
+                            command=self.update_image, length=300)
         # var.bind("<ButtonRelease-1>", callback)
-        self.tkscale.pack(side=tk.LEFT, expand=tk.YES)
+        tkscale.pack(side=tk.LEFT, expand=tk.YES)
         var = ttk.Button(frm, text='+', command=inc)
         var.pack(side=tk.LEFT)
         var = ttk.Entry(frm, textvariable=self.view_index, width=6)
@@ -268,23 +332,30 @@ class HDFImageViewer:
         var.bind('<Return>', self.update_image)
         var.bind('<KP_Enter>', self.update_image)
 
-        "----------- Image -----------"
-        self.fig = Figure(figsize=_figure_size, dpi=figure_dpi)
-        self.fig.patch.set_facecolor('w')
+        # axis label
+        var = ttk.Label(frm, textvariable=self.axis_name)
+        var.pack(side=tk.LEFT)
+        var = ttk.Label(frm, textvariable=self.axis_value)
+        var.pack(side=tk.LEFT)
+        return tkscale
+
+    def ini_image(self, figure_dpi):
+        fig = Figure(figsize=FIGURE_SIZE, dpi=figure_dpi)
+        fig.patch.set_facecolor('w')
         # Amplitude
-        self.ax1 = self.fig.add_subplot(111)
-        self.ax1_image = self.ax1.pcolormesh(np.zeros([100, 100]), shading='auto')
-        self.ax1.set_xlabel(u'Axis 0')
-        self.ax1.set_ylabel(u'Axis 1')
-        # self.ax1.set_title('Magnitudes')
-        self.ax1.set_xlim([0, 100])
-        self.ax1.set_ylim([0, 100])
-        self.cb1 = self.fig.colorbar(self.ax1_image, ax=self.ax1)
-        self.ax1.axis('image')
+        ax1 = fig.add_subplot(111)
+        ax1_image = ax1.pcolormesh(np.zeros([100, 100]), shading='auto')
+        ax1.set_xlabel(u'Axis 0')
+        ax1.set_ylabel(u'Axis 1')
+        # ax1.set_title('Magnitudes')
+        ax1.set_xlim([0, 100])
+        ax1.set_ylim([0, 100])
+        cb1 = fig.colorbar(ax1_image, ax=ax1)
+        ax1.axis('image')
 
         frm = tk.Frame(self.root)
         frm.pack(expand=tk.YES, fill=tk.BOTH, pady=2, padx=5)
-        canvas = FigureCanvasTkAgg(self.fig, frm)
+        canvas = FigureCanvasTkAgg(fig, frm)
         canvas.get_tk_widget().configure(bg='black')
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=tk.YES, padx=5, pady=2)
@@ -292,32 +363,42 @@ class HDFImageViewer:
         # Toolbar
         frm = tk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH, padx=5, pady=2)
-        self.toolbar = NavigationToolbar2TkAgg(canvas, frm)
-        self.toolbar.update()
-        self.toolbar.pack(fill=tk.X, expand=tk.YES)
+        toolbar = NavigationToolbar2TkAgg(canvas, frm)
+        toolbar.update()
+        toolbar.pack(fill=tk.X, expand=tk.YES)
+        return fig, ax1, ax1_image, cb1, toolbar
 
-        "-------------------------Start Mainloop------------------------------"
-        if hdf_filename:
-            self._loadfile(hdf_filename)
-        # self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.mainloop()
+    "======================================================"
+    "================= menu functions ====================="
+    "======================================================"
 
-    "------------------------------------------------------------------------"
-    "--------------------------General Functions-----------------------------"
-    "------------------------------------------------------------------------"
+    def menu_newinstance(self):
+        HDFImageViewer(self.filepath.get(), parent=self.root)
+
+    def menu_treeviewer(self):
+        HDFViewer(self.filepath.get(), parent=self.root)
+
+    def menu_makesmall(self):
+        print(f"size: {self.fig.get_size_inches()}, dpi: {self.fig.get_dpi()}")
+        # self.fig.set_size_inches(6, 4)
+        self.fig.set_dpi(50)
+        self.fig.canvas.draw()
+
+    "======================================================"
+    "================ general functions ==================="
+    "======================================================"
 
     def _loadfile(self, filename):
         """Load HDF file"""
         self.filepath.set(filename)
         image_address = get_hdf_image_address(filename)
         self.address.set(image_address)
+        axes_address, signal_address = get_nexus_axes_address(filename)
+        self.axis_address.set(axes_address)
         if not image_address:
             self.error_message = "Can't find an image address"
             show_error(self.error_message, self.root)
         self.update_axis()
-
-    def loadfile(self, event=None):
-        self._loadfile(self.filepath.get())
 
     def _update_axis(self):
         """Get data size etc"""
@@ -325,8 +406,9 @@ class HDFImageViewer:
 
         hdf_filename = self.filepath.get()
         address = self.address.get()
+        axis_address = self.axis_address.get()
         # Check dataset
-        self.error_message = check_dataset(hdf_filename, address)
+        self.error_message = check_image_dataset(hdf_filename, address)
         if self.error_message:
             show_error(self.error_message, self.root)
         # Load image to get size and shape
@@ -347,6 +429,13 @@ class HDFImageViewer:
                 self.cmin.set(0)
                 self.cmax.set(cmax)
 
+            # axis values
+            if axis_address:
+                axis_dataset = hdf.get(axis_address)
+                if axis_dataset and len(axis_dataset) == shape[self._ax]:
+                    self.axis_name.set(f"{address_name(axis_address)} = ")
+                    self.axis_value.set(axis_dataset[shape[self._ax]//2])
+
         # udpate scale and axes
         self.tkscale.config(to=shape[self._ax] - 1)  # set slider max
         if self._ax == 0:
@@ -365,11 +454,6 @@ class HDFImageViewer:
             self.ax1.set_xlim([0, shape[1]])
             self.ax1.set_ylim([0, shape[0]])
         self.view_index.set(shape[self._ax]//2)
-
-    def update_axis(self, event=None):
-        """Get data size etc"""
-        self._update_axis()
-        self.update_image()
 
     def update_image(self, event=None):
         """Plot image data"""
@@ -400,13 +484,29 @@ class HDFImageViewer:
         self.cb1.update_normal(self.ax1_image)
         self.toolbar.update()
         self.fig.canvas.draw()
+        # Load axis label
+        value = get_hdf_value(
+            hdf_filename=self.filepath.get(),
+            address=self.axis_address.get(),
+            image_number=int(self.view_index.get())
+        )
+        self.axis_value.set(value)
 
-    def on_close(self):
-        self.root.destroy()
+    "======================================================"
+    "================= event functions ===================="
+    "======================================================"
 
-    "------------------------------------------------------------------------"
-    "---------------------------Button Functions-----------------------------"
-    "------------------------------------------------------------------------"
+    def loadfile(self, event=None):
+        self._loadfile(self.filepath.get())
+
+    def update_axis(self, event=None):
+        """Get data size etc"""
+        self._update_axis()
+        self.update_image()
+
+    "======================================================"
+    "================ button functions ===================="
+    "======================================================"
 
     def select_file(self, event=None):
         filename = select_hdf_file(self.root)
@@ -417,14 +517,23 @@ class HDFImageViewer:
         if self.filepath.get():
             address = dataset_selector(
                 hdf_filename=self.filepath.get(),
-                message="Select image data Dataset"
+                message="Select image data Dataset",
+                parent=self.root,
             )
             if address:
                 self.address.set(address)
                 self.update_axis()
 
-    def menu_newinstance(self):
-        HDFImageViewer(self.filepath.get())
+    def select_axis_dataset(self):
+        if self.filepath.get():
+            address = dataset_selector(
+                hdf_filename=self.filepath.get(),
+                message="Select axis data Dataset",
+                parent=self.root,
+            )
+            if address:
+                self.axis_address.set(address)
+                self.update_axis()
 
-    def menu_treeviewer(self):
-        HDFViewer(self.filepath.get())
+
+

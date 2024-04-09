@@ -18,7 +18,12 @@ HDF_FILE = "C:/Users/grp66007/OneDrive - Diamond Light Source Ltd/I16/Nexus_Form
 # address = dataset_selector(HDF_FILE, 'Select a dataset')
 # print(address)
 
-from hdf_scan_inspector.hdf_image_gui import HDFImageViewer
+#from hdf_scan_inspector.hdf_image_gui import HDFImageViewer
 
-HDFImageViewer(HDF_FILE)
+#HDFImageViewer(HDF_FILE)
+
+from hdf_scan_inspector.hdf_folder_gui import HDFFolderViewer, HDFFolderFiles
+
+HDFFolderViewer(r"C:\Users\grp66007\OneDrive - Diamond Light Source Ltd\I16\Nexus_Format")
+#HDFFolderFiles([r"C:\Users\grp66007\OneDrive - Diamond Light Source Ltd\I16\Nexus_Format\example_nexus"])
 
