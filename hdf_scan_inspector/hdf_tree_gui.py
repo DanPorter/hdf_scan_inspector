@@ -25,33 +25,10 @@ import h5py
 import time
 import tkinter as tk
 from tkinter import ttk
-import sv_ttk
 
-
-from hdf_scan_inspector.functions import create_root, topmenu, select_hdf_file, open_close_all_tree, \
-    address_name, eval_hdf
-
-
-def load_address(hdf_filename, address):
-    """Generate string describing object in hdf file"""
-    with h5py.File(hdf_filename, 'r') as hdf:
-        obj = hdf.get(address)
-        try:
-            link = repr(hdf.get(address, getlink=True))
-        except RuntimeError:
-            link = 'No link'
-        myclass = hdf.get(address, getclass=True)
-        out = f"{obj.name}\n"
-        out += f"{repr(obj)}\n"
-        out += f"{link}\n"
-        out += f"{repr(myclass)}\n"
-        out += '\nattrs:\n'
-        out += '\n'.join([f"{key}: {obj.attrs[key]}" for key in obj.attrs])
-        if isinstance(obj, h5py.Dataset):
-            out += '\n\n--- Data ---\n'
-            out += f"Shape: {obj.shape}\nSize: {obj.size}\n\n"
-            out += str(obj[()])
-    return out
+from hdf_scan_inspector.hdf_functions import address_name, eval_hdf, map_hdf, hdfobj_string
+from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree
+from hdf_scan_inspector.tk_functions import light_theme, dark_theme
 
 
 def populate_tree(treeview, hdf_filename, openstate=True):
@@ -151,15 +128,17 @@ class HDFViewer:
             'File': {
                 'Select File': self.select_file,
                 'Reload': self.populate_tree,
+                'Open plot GUI': self.menu_plot_gui,
                 'Open image GUI': self.menu_image_gui,
+                'Open namespace GUI': self.menu_namepace_gui,
             },
             'HDF': {
                 'Expand all': self.menu_expand_all,
                 'Collapse all': self.menu_collapse_all,
             },
             'Theme': {
-                'Dark': sv_ttk.use_dark_theme,
-                'Light': sv_ttk.use_light_theme,
+                'Dark': dark_theme,
+                'Light': light_theme,
             }
         }
 
@@ -182,7 +161,7 @@ class HDFViewer:
             self.filepath.set(hdf_filename)
             self.populate_tree()
         if parent is None:
-            sv_ttk.use_light_theme()
+            light_theme()
             self.root.mainloop()
 
     "======================================================"
@@ -283,9 +262,16 @@ class HDFViewer:
     def menu_collapse_all(self):
         open_close_all_tree(self.tree, "", False)
 
+    def menu_plot_gui(self):
+        from .hdf_plot_gui import HDFPlotViewer
+        HDFPlotViewer(self.filepath.get(), parent=self.root)
+
     def menu_image_gui(self):
         from .hdf_image_gui import HDFImageViewer
         HDFImageViewer(self.filepath.get(), parent=self.root)
+
+    def menu_namepace_gui(self):
+        HDFMapView(self.filepath.get(), parent=self.root)
 
     "======================================================"
     "================ general functions ==================="
@@ -309,7 +295,7 @@ class HDFViewer:
         self.text.delete('1.0', tk.END)
         addresses = [self.tree.item(item)["text"] for item in self.tree.selection()]
         if addresses:
-            out = load_address(self.filepath.get(), addresses[0])
+            out = hdfobj_string(self.filepath.get(), addresses[0])
             self.text.insert('1.0', out)
 
     def on_double_click(self, event=None):
@@ -384,7 +370,7 @@ class HDFSelector:
         populate_tree(self.tree, hdf_filename, False)
         self.root.bind_all('<KeyPress>', self.on_key_press)
         if parent is None:
-            sv_ttk.use_light_theme()
+            light_theme()
             # self.root.mainloop()
 
     "======================================================"
@@ -490,3 +476,51 @@ def dataset_selector(hdf_filename, message='', parent=None):
     :return hdf_address: str address
     """
     return HDFSelector(hdf_filename, message, parent).show()
+
+
+class HDFMapView:
+    """
+    HDF Dataset Map Viewer
+    Creates a list of the datasets in the HDF file and the namespace hdf_name associated.
+    :param hdf_filename: str hdf filepath
+    :param parent: tk root
+    """
+
+    def __init__(self, hdf_filename, parent):
+
+        filename = address_name(hdf_filename)
+        self.root = create_root(f'Datasets: {filename}', parent=parent)
+
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        tree = ttk.Treeview(frm, columns=('name', 'value'), selectmode='browse')
+        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Scrollbar(frm, orient=tk.VERTICAL)
+        var.pack(side=tk.LEFT, fill=tk.Y)
+        var.config(command=tree.yview)
+
+        # Populate tree
+        tree.heading("#0", text="HDF Address")
+        tree.heading("name", text="Name")
+        tree.heading("value", text="Value")
+        tree.column("#0", width=400)
+        tree.column("name", width=100)
+        tree.column("value", width=100)
+
+        with h5py.File(hdf_filename, 'r') as hdf:
+            hdfmap = map_hdf(hdf)
+            for name, address in hdfmap.combined.items():
+                dataset = hdf[address]
+                if dataset.shape:
+                    val = f"{dataset.dtype} {dataset.shape}"
+                else:
+                    val = str(dataset[()])
+                values = (name, val)
+                # datasets.append(address)
+                tree.insert("", tk.END, text=address, values=values)
+
+        var = ttk.Button(self.root, text='Close', command=self.root.destroy)
+        var.pack(side=tk.TOP, fill=tk.X, expand=tk.YES)
+

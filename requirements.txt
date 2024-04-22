@@ -1,7 +1,7 @@
-h5py~=2.10.0
-sv_ttk
+h5py
+sv-ttk
 setuptools
-future~=0.18.2
-numpy~=1.19.2
-imageio~=2.9.0
-matplotlib~=3.3.2
+future
+numpy
+imageio
+matplotlib

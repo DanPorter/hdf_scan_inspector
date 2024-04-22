@@ -8,155 +8,20 @@ Diamond Light Source Ltd
 
 import h5py
 import numpy as np
-from imageio import imread
 import tkinter as tk
 from tkinter import ttk
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk as NavigationToolbar2TkAgg
-import sv_ttk
 
 from hdf_scan_inspector.hdf_tree_gui import dataset_selector, HDFViewer
-from hdf_scan_inspector.functions import create_root, topmenu, select_hdf_file, show_error, address_name, \
-    get_nexus_axes_address
+from hdf_scan_inspector.hdf_functions import address_name, check_image_dataset, \
+    get_nexus_axes_address, dataset_shape, get_image, get_hdf_image, get_hdf_array_value, get_hdf_image_address
 
-FIGURE_SIZE = [14, 6]
+from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, show_error, light_theme, dark_theme
+from hdf_scan_inspector.tk_matplotlib_functions import ini_image
+
 AXES = ['axis 1', 'axis 2', 'axis 3']
 COLORMAPS = ['viridis', 'Spectral', 'plasma', 'inferno', 'Greys', 'Blues', 'winter', 'autumn',
              'hot', 'hot_r', 'hsv', 'rainbow', 'jet', 'twilight', 'hsv']
 DEFAULT_COLORMAP = 'twilight'
-
-
-def dataset_shape(dataset):
-    """
-    Return 3D dataset shape, flattening any dimensions that aren't the last two
-    :param dataset: HDF dataset object
-    :return: (i,j,k) tuple
-    """
-    shape = (np.prod(dataset.shape[:-2]), *dataset.shape[-2:])
-    return shape
-
-
-def get_image(dataset, image_number, axis=0):
-    """
-    Load a single image from a dataset, on a given axis
-    Assumes the dataset is 3D
-    If dataset is >3D, dimensions [0:-2] will be flattened
-    :param dataset: HDF dataset object with ndim > 2
-    :param image_number: index of the dataset along given axis (flattened index if >3D)
-    :param axis: 0,1,2 dataset axis
-    :return: 2D numpy array
-    """
-    axis = axis % 3
-    if axis == 0:
-        # axis0 may be a combination of 1+ axes
-        index_slice = np.unravel_index(image_number, dataset.shape[:-2]) + (slice(None), ) * 2
-        shape = dataset.shape[-2:]
-    elif axis == 1:
-        index_slice = (slice(None), ) * len(dataset.shape[:-2]) + (image_number, ) + (slice(None), )
-        shape = dataset_shape(dataset)
-        shape = (shape[0], shape[2])
-    else:
-        index_slice = (slice(None),) * len(dataset.shape[:-2]) + (slice(None),) + (image_number,)
-        shape = dataset_shape(dataset)
-        shape = (shape[0], shape[1])
-    return dataset[index_slice].reshape(shape)
-
-
-def get_image_from_files(image_filenames, image_number, axis=0):
-    """
-    Load a single image from a list of image files (e.g. .tif)
-    :param image_filenames: list of str
-    :param image_number: int
-    :param axis:
-    :return:
-    """
-    if axis == 0:
-        # return single image
-        return imread(image_filenames[image_number])
-    if axis == 1:
-        # return image of slice of each image
-        return np.array([imread(f)[image_number, :] for f in image_filenames])
-    return np.array([imread(f)[:, image_number] for f in image_filenames])
-
-
-def get_hdf_image(hdf_filename, address, image_number, axis=0):
-    """
-    Load a single image from a dataset in a HDF file, on a given axis
-    :param hdf_filename: str filename of HDF file
-    :param address: str HDF address of 3D dataset
-    :param image_number: index of the dataset along given axis (flattened index if >3D)
-    :param axis: 0,1,2 dataset axis
-    :return: 2D numpy array
-    """
-    with h5py.File(hdf_filename, 'r') as hdf:
-        dataset = hdf.get(address)
-        image = get_image(dataset, image_number, axis)
-    return image
-
-
-def get_hdf_value(hdf_filename, address, image_number):
-    """
-    Load a single value from a dataset in a HDF file
-    :param hdf_filename: str filename of HDF file
-    :param address: str HDF address of 3D dataset
-    :param image_number: index of the dataset
-    :return: float
-    """
-    with h5py.File(hdf_filename, 'r') as hdf:
-        if not address:
-            return 0
-        dataset = hdf.get(address)
-        if dataset and image_number < len(dataset):
-            return dataset[image_number]
-    return 0
-
-
-def get_hdf_image_address(hdf_filename):
-    """
-    Return address of first 3D dataset in HDF file
-    :param hdf_filename: str filename of hdf file
-    :return: str hdf address or empty str
-    """
-
-    def recur_func(hdf_group, top_address='/'):
-        for key in hdf_group:
-            obj = hdf_group.get(key)
-            address = top_address + key
-            if isinstance(obj, h5py.Group):
-                address = recur_func(obj, address + '/')
-                if address:
-                    return address
-            elif isinstance(obj, h5py.Dataset) and obj.ndim >= 3:
-                return address
-        return ""
-
-    with h5py.File(hdf_filename, 'r') as hdf:
-        image_address = recur_func(hdf, "")
-    return image_address
-
-
-def check_image_dataset(hdf_filename, address):
-    """
-    Check dataset exists and is correct shape for image use
-    :param hdf_filename: str filepath of HDF file
-    :param address: str HDF address of dataset
-    :return: str error messge, empty str if OK
-    """
-    if not hdf_filename:
-        return "Please select a HDF file"
-    if not h5py.is_hdf5(hdf_filename):
-        return f"{hdf_filename} is not a HDF5 file"
-    if not address:
-        return "Please select a Dataset address"
-
-    with h5py.File(hdf_filename, 'r') as hdf:
-        dataset = hdf.get(address)
-        if dataset is None:
-            return f"HDF File:\n{hdf_filename}\n does not contain the dataset:\n{address}"
-        if dataset.ndim < 3:
-            return f"Dataset:\n{address}\n is the wrong shape: {dataset.shape}"
-    return ""
 
 
 class HDFImageViewer:
@@ -168,10 +33,10 @@ class HDFImageViewer:
     Use the displayed slider and options to view the data
 
     :param hdf_filename: str filename of HDF file
-    :param figure_dpi: int describes the default size of the GUI
+    :param parent: tk root or None
     """
 
-    def __init__(self, hdf_filename="", figure_dpi=100, parent=None):
+    def __init__(self, hdf_filename="", parent=None):
 
         self.root = create_root('HDF Image Viewer', parent=parent)
 
@@ -205,8 +70,8 @@ class HDFImageViewer:
                 'Reload': self.loadfile,
             },
             'Theme': {
-                'Dark': sv_ttk.use_dark_theme,
-                'Light': sv_ttk.use_light_theme,
+                'Dark': dark_theme,
+                'Light': light_theme,
                 'Make small': self.menu_makesmall,
             }
         }
@@ -227,13 +92,13 @@ class HDFImageViewer:
         self.tkscale = self.ini_slider()
 
         "----------- Image -----------"
-        self.fig, self.ax1, self.ax1_image, self.cb1, self.toolbar = self.ini_image(figure_dpi)
+        self.fig, self.ax1, self.ax1_image, self.cb1, self.toolbar = ini_image(self.root)
 
         "-------- Start Mainloop ------"
         if hdf_filename:
             self._loadfile(hdf_filename)
         if parent is None:
-            sv_ttk.use_light_theme()
+            light_theme()
             self.root.mainloop()
 
     "======================================================"
@@ -338,35 +203,6 @@ class HDFImageViewer:
         var = ttk.Label(frm, textvariable=self.axis_value)
         var.pack(side=tk.LEFT)
         return tkscale
-
-    def ini_image(self, figure_dpi):
-        fig = Figure(figsize=FIGURE_SIZE, dpi=figure_dpi)
-        fig.patch.set_facecolor('w')
-        # Amplitude
-        ax1 = fig.add_subplot(111)
-        ax1_image = ax1.pcolormesh(np.zeros([100, 100]), shading='auto')
-        ax1.set_xlabel(u'Axis 0')
-        ax1.set_ylabel(u'Axis 1')
-        # ax1.set_title('Magnitudes')
-        ax1.set_xlim([0, 100])
-        ax1.set_ylim([0, 100])
-        cb1 = fig.colorbar(ax1_image, ax=ax1)
-        ax1.axis('image')
-
-        frm = tk.Frame(self.root)
-        frm.pack(expand=tk.YES, fill=tk.BOTH, pady=2, padx=5)
-        canvas = FigureCanvasTkAgg(fig, frm)
-        canvas.get_tk_widget().configure(bg='black')
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=tk.YES, padx=5, pady=2)
-
-        # Toolbar
-        frm = tk.Frame(self.root)
-        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH, padx=5, pady=2)
-        toolbar = NavigationToolbar2TkAgg(canvas, frm)
-        toolbar.update()
-        toolbar.pack(fill=tk.X, expand=tk.YES)
-        return fig, ax1, ax1_image, cb1, toolbar
 
     "======================================================"
     "================= menu functions ====================="
@@ -485,7 +321,7 @@ class HDFImageViewer:
         self.toolbar.update()
         self.fig.canvas.draw()
         # Load axis label
-        value = get_hdf_value(
+        value = get_hdf_array_value(
             hdf_filename=self.filepath.get(),
             address=self.axis_address.get(),
             image_number=int(self.view_index.get())
