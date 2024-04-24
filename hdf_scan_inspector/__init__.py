@@ -10,5 +10,5 @@ from .hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector
 from .hdf_folder_gui import HDFFolderViewer
 
 # Version
-__version__ = '0.4.0'
-__date__ = '2024-04-22'
+__version__ = '0.4.1'
+__date__ = '2024-04-23'

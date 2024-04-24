@@ -26,7 +26,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-from hdf_scan_inspector.hdf_functions import address_name, eval_hdf, map_hdf, hdfobj_string
+from hdf_scan_inspector.hdf_functions import load_hdf, address_name, eval_hdf, map_hdf, hdfobj_string
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree
 from hdf_scan_inspector.tk_functions import light_theme, dark_theme
 
@@ -68,7 +68,7 @@ def populate_tree(treeview, hdf_filename, openstate=True):
                 # datasets.append(address)
                 treeview.insert(tree_group, tk.END, text=address, values=values)
 
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         # add top level file group
         treeview.insert("", tk.END, text='/', values=('File', address_name(hdf_filename), ''))
         recur_func(hdf, "")
@@ -325,7 +325,7 @@ class HDFViewer:
         expression = self.expression_box.get()
         out_str = f">>> {expression}\n"
         try:
-            with h5py.File(self.filepath.get(), 'r') as hdf:
+            with load_hdf(self.filepath.get()) as hdf:
                 out = eval_hdf(hdf, expression)
         except NameError as ne:
             out = ne
@@ -452,7 +452,7 @@ class HDFSelector:
         addresses = [self.tree.item(item)["text"] for item in self.tree.selection()]
         address = addresses[0]
 
-        with h5py.File(self.filepath.get(), 'r') as hdf:
+        with load_hdf(self.filepath.get()) as hdf:
             obj = hdf.get(address)
             if isinstance(obj, h5py.Dataset):
                 self.output = address
@@ -509,7 +509,7 @@ class HDFMapView:
         tree.column("name", width=100)
         tree.column("value", width=100)
 
-        with h5py.File(hdf_filename, 'r') as hdf:
+        with load_hdf(hdf_filename) as hdf:
             hdfmap = map_hdf(hdf)
             for name, address in hdfmap.combined.items():
                 dataset = hdf[address]

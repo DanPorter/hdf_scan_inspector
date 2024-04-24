@@ -11,11 +11,11 @@ Diamond Light Source Ltd
 import os
 import time
 import threading
-import h5py
 import tkinter as tk
 from tkinter import ttk
 
-from hdf_scan_inspector.hdf_functions import EXTENSIONS, address_name, eval_hdf, list_files, format_hdf, map_hdf
+from hdf_scan_inspector.hdf_functions import EXTENSIONS, load_hdf, ishdf, address_name, eval_hdf, list_files, \
+    format_hdf, map_hdf
 from hdf_scan_inspector.tk_functions import EditText, TEXTWIDTH, create_root, topmenu, select_folder, show_error
 from hdf_scan_inspector.tk_functions import select_hdf_file, light_theme, dark_theme
 from hdf_scan_inspector.tk_matplotlib_functions import ini_plot
@@ -439,7 +439,7 @@ class HDFFolderPlotViewer:
         addresses = [self.file_list.item(item)["values"][1] for item in self.file_list.selection()]
         if addresses:
             try:
-                with h5py.File(addresses[0], 'r') as hdf:
+                with load_hdf(addresses[0]) as hdf:
                     out = eval_hdf(hdf, expression)
             except NameError as ne:
                 out = ne
@@ -458,7 +458,7 @@ class HDFFolderPlotViewer:
         self.reset_plot()
         for item in self.file_list.selection():
             file_path = self.file_list.item(item)["values"][1]
-            with h5py.File(file_path, 'r') as hdf:
+            with load_hdf(file_path) as hdf:
                 m = map_hdf(hdf)
                 self.gen_text(hdf, m)
                 # self.default_axes(hdf)
@@ -689,13 +689,13 @@ class HDFPlotViewer:
     def load_file(self, filepath):
         self.reset_plot()
 
-        if not h5py.is_hdf5(filepath):
+        if not ishdf(filepath):
             show_error(
                 message=f"File: {filepath} is not a HDF file.",
                 parent=self.root
             )
 
-        with h5py.File(filepath, 'r') as hdf:
+        with load_hdf(filepath)as hdf:
             m = map_hdf(hdf)
             self.gen_text(hdf, m)
             if 'axes' in m.arrays and not self.xaxis.get():
@@ -799,9 +799,9 @@ class HDFPlotViewer:
         expression = self.terminal_entry.get()
         out_str = f"\n>>> {expression}\n"
 
-        if h5py.is_hdf5(self.filepath.get()):
+        if ishdf(self.filepath.get()):
             try:
-                with h5py.File(self.filepath.get(), 'r') as hdf:
+                with load_hdf(self.filepath.get()) as hdf:
                     out = eval_hdf(hdf, expression)
             except NameError as ne:
                 out = ne

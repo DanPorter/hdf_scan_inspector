@@ -12,18 +12,30 @@ import builtins
 import datetime
 import numpy as np
 import h5py
+from pathlib import Path
+
+try:
+    import hdf5plugin  # required for compressed data
+except ImportError:
+    print('Warning: hdf5plugin not available.')
 
 # parameters
 DEFAULT_ADDRESS = "entry1/scan_command"
 EXTENSIONS = ['.nxs', '.hdf', '.hdf5', '.h5']
+DEFAULT_EXTENSION = EXTENSIONS[0]
 # parameters for eval
 GLOBALS = {'np': np}
 GLOBALS_NAMELIST = dir(builtins) + list(GLOBALS.keys())
+ishdf = h5py.is_hdf5
 
 
 "==========================================================================="
 "================================ HDF functions ============================"
 "==========================================================================="
+
+
+def load_hdf(hdf_filename):
+    return h5py.File(hdf_filename, 'r')
 
 
 def address_name(address):
@@ -63,7 +75,7 @@ def list_path_time_files(directory, extension='.nxs'):
 
 def get_hdf_value(hdf_filename, hdf_address, default_value=''):
     """Open HDF file and return value from single dataset"""
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         dataset = hdf.get(hdf_address)
         if isinstance(dataset, h5py.Dataset):
             if dataset.size > 1:
@@ -74,7 +86,7 @@ def get_hdf_value(hdf_filename, hdf_address, default_value=''):
 
 def hdfobj_string(hdf_filename, address):
     """Generate string describing object in hdf file"""
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         obj = hdf.get(address)
         try:
             link = repr(hdf.get(address, getlink=True))
@@ -92,6 +104,47 @@ def hdfobj_string(hdf_filename, address):
             out += f"Shape: {obj.shape}\nSize: {obj.size}\n\n"
             out += str(obj[()])
     return out
+
+
+def search_filename_in_folder(topdir, search_str="*.nxs", case_sensitive=False):
+    """
+    Search recursivley for filenames
+    :param topdir: str address of directory to start in
+    :param search_str: str to search for, use * to specify unkonwn, e.g. "*.nxs"
+    :param case_sensitive:
+    :return: list
+    """
+    return [f.absolute() for f in Path(topdir).rglob(search_str, case_sensitive=case_sensitive)]
+
+
+def search_hdf_files(topdir, search_str=None, extension=DEFAULT_EXTENSION, address=DEFAULT_ADDRESS,
+                     whole_word=False, case_sensitive=False):
+    """
+    Search recurslively for hdf files in folder and check within files for dataset
+    :param topdir: str address of directory to start in
+    :param search_str: str or None, if None, returns any hdf file with this dataset
+    :param extension: str extension of files, e.g. ".nxs"
+    :param address: str dataset address to check
+    :param whole_word: Bool
+    :param case_sensitive:  Bool
+    :return: list
+    """
+    output = []
+    search_str = '' if search_str is None else search_str
+    search_str = search_str if case_sensitive else search_str.lower()
+
+    for f in Path(topdir).rglob(f"*{extension}"):
+        if not h5py.is_hdf5(f):
+            continue
+        with load_hdf(f) as hdf:
+            dataset = hdf.get(address)
+            if dataset:
+                if search_str:
+                    value = str(dataset[()]) if case_sensitive else str(dataset[()]).lower()
+                    if (whole_word and search_str == value) or (search_str in value):
+                        output.append(f)
+                else:
+                    output.append(f)
 
 
 "==========================================================================="
@@ -162,7 +215,7 @@ def get_hdf_image(hdf_filename, address, image_number, axis=0):
     :param axis: 0,1,2 dataset axis
     :return: 2D numpy array
     """
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         dataset = hdf.get(address)
         image = get_image(dataset, image_number, axis)
     return image
@@ -176,7 +229,7 @@ def get_hdf_array_value(hdf_filename, address, image_number):
     :param image_number: index of the dataset
     :return: float
     """
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         if not address:
             return 0
         dataset = hdf.get(address)
@@ -204,7 +257,7 @@ def get_hdf_image_address(hdf_filename):
                 return address
         return ""
 
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         image_address = recur_func(hdf, "")
     return image_address
 
@@ -223,7 +276,7 @@ def check_image_dataset(hdf_filename, address):
     if not address:
         return "Please select a Dataset address"
 
-    with h5py.File(hdf_filename, 'r') as hdf:
+    with load_hdf(hdf_filename) as hdf:
         dataset = hdf.get(address)
         if dataset is None:
             return f"HDF File:\n{hdf_filename}\n does not contain the dataset:\n{address}"
@@ -450,7 +503,7 @@ def get_nexus_axes_address(hdf_filename):
     :return axes_address: str hdf address of first x-axis dataset
     :return signal_address: str hdf address of y-axis dataset
     """
-    with h5py.File(hdf_filename, 'r') as nx:
+    with load_hdf(hdf_filename) as nx:
         try:
             axes_datasets, signal_dataset = get_nexus_axes_datasets(nx)
         except KeyError:

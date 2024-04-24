@@ -6,13 +6,12 @@ Diamond Light Source Ltd
 2024
 """
 
-import h5py
 import numpy as np
 import tkinter as tk
 from tkinter import ttk
 
 from hdf_scan_inspector.hdf_tree_gui import dataset_selector, HDFViewer
-from hdf_scan_inspector.hdf_functions import address_name, check_image_dataset, \
+from hdf_scan_inspector.hdf_functions import load_hdf, address_name, check_image_dataset, \
     get_nexus_axes_address, dataset_shape, get_image, get_hdf_image, get_hdf_array_value, get_hdf_image_address
 
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, show_error, light_theme, dark_theme
@@ -248,7 +247,7 @@ class HDFImageViewer:
         if self.error_message:
             show_error(self.error_message, self.root)
         # Load image to get size and shape
-        with h5py.File(hdf_filename, 'r') as hdf:
+        with load_hdf(hdf_filename) as hdf:
             dataset = hdf.get(address)
 
             shape = dataset_shape(dataset)

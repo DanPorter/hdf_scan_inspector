@@ -5,8 +5,6 @@ tkinter funcitons
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-import h5py
-
 TEXTWIDTH = 50  # characters, width of textboxes
 
 try:
@@ -51,6 +49,7 @@ def topmenu(root, menu_dict):
 
 def select_hdf_file(parent):
     """Select HDF file using filedialog"""
+    from .hdf_functions import ishdf
     filename = filedialog.askopenfilename(
         title='Select file to open',
         filetypes=[('NXS file', '.nxs'),
@@ -58,7 +57,7 @@ def select_hdf_file(parent):
                    ('All files', '.*')],
         parent=parent
     )
-    if filename and not h5py.is_hdf5(filename):
+    if filename and not ishdf(filename):
         messagebox.showwarning(
             title='Incorrect File Type',
             message=f"File: \n{filename}\n can't be read by h5py",

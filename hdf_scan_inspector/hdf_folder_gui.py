@@ -15,12 +15,198 @@ from threading import Thread
 
 from hdf_scan_inspector.hdf_functions import EXTENSIONS, DEFAULT_ADDRESS, address_name, \
     list_files, get_hdf_value, list_path_time_files, display_timestamp
+from hdf_scan_inspector.hdf_functions import search_filename_in_folder, search_hdf_files
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree, select_folder
 from hdf_scan_inspector.tk_functions import light_theme, dark_theme
 from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector
 
 
-class HDFFolderViewer:
+class _FolderGui:
+    """Inheretence class"""
+    root = None
+    tree = None
+    filepath = None
+
+    "======================================================"
+    "================= init functions ====================="
+    "======================================================"
+
+    def ini_menu(self):
+        menu = {
+            'File': {
+                'New window': self.menu_new_window,
+                'Open Folder Viewer': self.menu_folder_browser,
+                'Open Folder list': self.menu_folder_files,
+                'Open Folder plot': self.menu_folder_plot,
+                'Open file inspector': self.menu_file_gui,
+                'Open image GUI': self.menu_image_gui,
+                'Open dataset GUI': self.menu_namespace_gui
+            },
+            'Search': {
+                'Search for file': self.menu_search_file,
+                'Search hdf files for dataset': self.menu_search_dataset,
+            },
+            'Theme': {
+                'Dark': dark_theme,
+                'Light': light_theme,
+            }
+        }
+
+        topmenu(self.root, menu)
+
+    def ini_treeview(self):
+        main = ttk.Frame(self.root)
+        main.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        frm = ttk.Frame(main)
+        frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+
+        tree = ttk.Treeview(frm, columns=('modified', 'files', 'dataset', 'filepath'), selectmode='browse')
+        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
+        var.pack(side=tk.LEFT, fill=tk.Y)
+        tree.configure(yscrollcommand=var.set)
+
+        # Populate tree
+        tree.heading("#0", text="Folder")
+        tree.column("#0", width=200)
+        tree.heading("modified", text='Modified')
+        tree.column("modified", width=200)
+        tree.heading("files", text='Files')
+        tree.column("files", width=100)
+        tree.heading("dataset", text=address_name(DEFAULT_ADDRESS))
+        tree.column("dataset", width=400)
+
+        tree.bind("<Button-3>", self.right_click_menu(frm, tree))
+        return tree
+
+    "======================================================"
+    "================= menu functions ====================="
+    "======================================================"
+
+    def menu_new_window(self):
+        pass
+
+    def menu_folder_browser(self):
+        filepath, folderpath = self.get_filepath()
+        HDFFolderViewer(folderpath, parent=self.root)
+
+    def menu_folder_files(self):
+        filepath, folderpath = self.get_filepath()
+        HDFFolderFiles(folderpath, parent=self.root)
+
+    def menu_folder_plot(self):
+        from .hdf_plot_gui import HDFFolderPlotViewer
+        filepath, folderpath = self.get_filepath()
+        HDFFolderPlotViewer(folderpath, parent=self.root)
+
+    def menu_file_gui(self):
+        filepath, folderpath = self.get_filepath()
+        if filepath:
+            HDFViewer(filepath, parent=self.root)
+        else:
+            HDFViewer(folderpath, parent=self.root)
+
+    def menu_plot_gui(self):
+        from .hdf_plot_gui import HDFPlotViewer
+        filepath, folderpath = self.get_filepath()
+        if filepath:
+            HDFPlotViewer(filepath, parent=self.root)
+        else:
+            HDFPlotViewer(folderpath, parent=self.root)
+
+    def menu_image_gui(self):
+        from .hdf_image_gui import HDFImageViewer
+        filepath, folderpath = self.get_filepath()
+        if filepath:
+            HDFImageViewer(filepath, parent=self.root)
+        else:
+            HDFImageViewer(folderpath, parent=self.root)
+
+    def menu_namespace_gui(self):
+        filepath, folderpath = self.get_filepath()
+        if filepath:
+            HDFMapView(filepath, parent=self.root)
+        else:
+            HDFMapView(folderpath, parent=self.root)
+
+    def menu_search_file(self):
+        filepath, folderpath = self.get_filepath()
+        HDFFileSearch(folderpath, parent=self.root)
+
+    def menu_search_dataset(self):
+        pass
+
+    def menu_expand_all(self):
+        open_close_all_tree(self.tree, "", True)
+
+    def menu_collapse_all(self):
+        open_close_all_tree(self.tree, "", False)
+
+    def right_click_menu(self, frame, tree):
+        # right-click menu - file options
+        m_file = tk.Menu(frame, tearoff=0)
+        m_file.add_command(label="open Treeview", command=self.menu_file_gui)
+        m_file.add_command(label="open Plot", command=self.menu_plot_gui)
+        m_file.add_command(label="open Image", command=self.menu_image_gui)
+        m_file.add_command(label="open Namespace", command=self.menu_namespace_gui)
+        # right-click menu - folder options
+        m_folder = tk.Menu(frame, tearoff=0)
+        m_folder.add_command(label="Open Folder Datasets", command=self.menu_folder_files)
+        m_folder.add_command(label="Open Folder Plots", command=self.menu_folder_plot)
+
+        def menu_popup(event):
+            # select item
+            iid = tree.identify_row(event.y)
+            if iid:
+                tree.selection_set(iid)
+                filename, foldername = self.get_filepath()
+                if filename:
+                    try:
+                        m_file.tk_popup(event.x_root, event.y_root)
+                    finally:
+                        m_file.grab_release()
+                else:
+                    try:
+                        m_folder.tk_popup(event.x_root, event.y_root)
+                    finally:
+                        m_file.grab_release()
+        return menu_popup
+
+    "======================================================"
+    "================ general functions ==================="
+    "======================================================"
+
+    def get_filepath(self):
+        """
+        Return filepath and folderpath of current selection
+        :returns hdf_filename: str full filepath or None if selection isn't a file
+        :returns foldername: str folder path
+        """
+        return None, self.filepath.get()
+
+    def _delete_tree(self):
+        self.tree.delete(*self.tree.get_children())
+
+    def _on_close(self):
+        # self.root.unbind_all('<KeyPress>')
+        self.root.destroy()
+
+    "======================================================"
+    "================ button functions ===================="
+    "======================================================"
+
+    def browse_folder(self):
+        folder_directory = select_folder(parent=self.root)
+        if folder_directory:
+            self.filepath.set(folder_directory)
+
+    def up_folder(self):
+        self.filepath.set(os.path.abspath(os.path.join(self.filepath.get(), '..')))
+
+
+class HDFFolderViewer(_FolderGui):
     """
     HDF Folder Viewer - display cascading hierarchical files within a directory, with data from HDF files
         HDFFolderViewer()
@@ -55,22 +241,7 @@ class HDFFolderViewer:
         self.select_action = tk.StringVar(self.root, '')
 
         "----------- MENU -----------"
-        menu = {
-            'File': {
-                'New window': self.menu_new_window,
-                'Open Folder list': self.menu_folder_files,
-                'Open Folder plot': self.menu_folder_plot,
-                'Open file inspector': self.menu_file_gui,
-                'Open image GUI': self.menu_image_gui,
-                'Open dataset GUI': self.menu_namespace_gui
-            },
-            'Theme': {
-                'Dark': dark_theme,
-                'Light': light_theme,
-            }
-        }
-
-        topmenu(self.root, menu)
+        self.ini_menu()
 
         "----------- Dataset -----------"
         self.ini_dataset()
@@ -83,6 +254,9 @@ class HDFFolderViewer:
 
         "----------- TreeView -----------"
         self.tree = self.ini_treeview()
+        self.tree['displaycolumns'] = ('modified', 'files', 'dataset')  # hide columns
+        self.tree.bind("<<TreeviewOpen>>", self.tree_open)
+        self.tree.bind("<Double-1>", self.on_double_click)
 
         "-------------------------Start Mainloop------------------------------"
         if initial_directory:
@@ -159,121 +333,8 @@ class HDFFolderViewer:
         var.pack(side=tk.LEFT)
         self.select_action.set(_actions[0])
 
-    def ini_treeview(self):
-        main = ttk.Frame(self.root)
-        main.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
-
-        frm = ttk.Frame(main)
-        frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
-
-        tree = ttk.Treeview(frm, columns=('modified', 'files', 'dataset'), selectmode='browse')
-        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
-
-        var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
-        var.pack(side=tk.LEFT, fill=tk.Y)
-        tree.configure(yscrollcommand=var.set)
-
-        # Populate tree
-        tree.heading("#0", text="Folder")
-        tree.column("#0", width=200)
-        tree.heading("modified", text='Modified')
-        tree.column("modified", width=200)
-        tree.heading("files", text='Files')
-        tree.column("files", width=100)
-        tree.heading("dataset", text=address_name(DEFAULT_ADDRESS))
-        tree.column("dataset", width=400, anchor='w')
-        # tree.bind("<<TreeviewSelect>>", self.tree_select)
-        tree.bind("<<TreeviewOpen>>", self.tree_open)
-        tree.bind("<Double-1>", self.on_double_click)
-        # tree.bind("<Button-2>", self.on_right_click)
-        # tree.bind("<Button-3>", self.on_right_click)
-
-        # right-click menu - file options
-        m_file = tk.Menu(frm, tearoff=0)
-        m_file.add_command(label="open Treeview", command=self.menu_file_gui)
-        m_file.add_command(label="open Plot", command=self.menu_plot_gui)
-        m_file.add_command(label="open Image", command=self.menu_image_gui)
-        m_file.add_command(label="open Namespace", command=self.menu_namespace_gui)
-        # right-click menu - folder options
-        m_folder = tk.Menu(frm, tearoff=0)
-        m_folder.add_command(label="Open Folder Plots", command=self.menu_folder_plot)
-
-        def menu_popup(event):
-            # select item
-            iid = tree.identify_row(event.y)
-            if iid:
-                tree.selection_set(iid)
-                filename, foldername = self.get_filepath()
-                if filename:
-                    try:
-                        m_file.tk_popup(event.x_root, event.y_root)
-                    finally:
-                        m_file.grab_release()
-                else:
-                    try:
-                        m_folder.tk_popup(event.x_root, event.y_root)
-                    finally:
-                        m_file.grab_release()
-
-        tree.bind("<Button-3>", menu_popup)
-        return tree
-
     "======================================================"
-    "================= menu functions ====================="
-    "======================================================"
-
-    def menu_new_window(self):
-        HDFFolderViewer(self.filepath.get(), parent=self.root)
-
-    def menu_folder_files(self):
-        HDFFolderFiles(parent=self.root)
-
-    def menu_folder_plot(self):
-        from .hdf_plot_gui import HDFFolderPlotViewer
-        filepath, folderpath = self.get_filepath()
-        if filepath:
-            HDFFolderPlotViewer(folderpath, parent=self.root)
-        else:
-            HDFFolderPlotViewer(folderpath, parent=self.root)
-
-    def menu_file_gui(self):
-        filepath, folderpath = self.get_filepath()
-        if filepath:
-            HDFViewer(filepath, parent=self.root)
-        else:
-            HDFViewer(folderpath, parent=self.root)
-
-    def menu_plot_gui(self):
-        from .hdf_plot_gui import HDFPlotViewer
-        filepath, folderpath = self.get_filepath()
-        if filepath:
-            HDFPlotViewer(filepath, parent=self.root)
-        else:
-            HDFPlotViewer(folderpath, parent=self.root)
-
-    def menu_image_gui(self):
-        from .hdf_image_gui import HDFImageViewer
-        filepath, folderpath = self.get_filepath()
-        if filepath:
-            HDFImageViewer(filepath, parent=self.root)
-        else:
-            HDFImageViewer(folderpath, parent=self.root)
-
-    def menu_namespace_gui(self):
-        filepath, folderpath = self.get_filepath()
-        if filepath:
-            HDFMapView(filepath, parent=self.root)
-        else:
-            HDFMapView(folderpath, parent=self.root)
-
-    def menu_expand_all(self):
-        open_close_all_tree(self.tree, "", True)
-
-    def menu_collapse_all(self):
-        open_close_all_tree(self.tree, "", False)
-
-    "======================================================"
-    "================ general functions ==================="
+    "================ button functions ===================="
     "======================================================"
 
     def get_filepath(self):
@@ -293,18 +354,12 @@ class HDFFolderViewer:
                 foldername = os.path.join(foldername, item['text'])
         return hdf_filename, foldername
 
-    "======================================================"
-    "================ button functions ===================="
-    "======================================================"
-
     def browse_folder(self):
-        folder_directory = select_folder(parent=self.root)
-        if folder_directory:
-            self.filepath.set(folder_directory)
-            self._list_folders()
+        super().browse_folder()
+        self._list_folders()
 
     def up_folder(self):
-        self.filepath.set(os.path.abspath(os.path.join(self.filepath.get(), '..')))
+        super().up_folder()
         self._list_folders()
 
     def select_dataset(self):
@@ -415,9 +470,6 @@ class HDFFolderViewer:
     "================= misc functions ====================="
     "======================================================"
 
-    def _delete_tree(self):
-        self.tree.delete(*self.tree.get_children())
-
     def _list_folders(self, event=None):
         name_time_nfiles = list_path_time_files(self.filepath.get(), self.extension.get())
         self._delete_tree()
@@ -454,12 +506,8 @@ class HDFFolderViewer:
         th = Thread(target=self._update_datasets)
         th.start()  # will run until complete, may error if TreeView is destroyed
 
-    def _on_close(self):
-        # self.root.unbind_all('<KeyPress>')
-        self.root.destroy()
 
-
-class HDFFolderFiles:
+class HDFFolderFiles(_FolderGui):
     """
     HDF Folder Viewer - display cascading hierarchical files within a directory, with data from HDF files
         HDFFolderViewer()
@@ -487,24 +535,7 @@ class HDFFolderFiles:
         self.select_action = tk.StringVar(self.root, '')
 
         "----------- MENU -----------"
-        menu = {
-            'File': {
-                'New window': self.menu_new_window,
-                'Open folder viewer': self.menu_folder_viewer,
-                'Open file inspector': self.menu_file_gui,
-                'Open image GUI': self.menu_image_gui,
-            },
-            'HDF': {
-                'Expand all': self.menu_expand_all,
-                'Collapse all': self.menu_collapse_all,
-            },
-            'Theme': {
-                'Dark': dark_theme,
-                'Light': light_theme,
-            }
-        }
-
-        topmenu(self.root, menu)
+        self.ini_menu()
 
         "----------- BROWSE -----------"
         self.ini_folderpath()
@@ -517,6 +548,9 @@ class HDFFolderFiles:
 
         "----------- TreeView -----------"
         self.tree = self.ini_treeview()
+        self.tree['displaycolumns'] = ("dataset",)  # hide filepath column
+        self.tree.bind("<<TreeviewSelect>>", self.tree_select)
+        self.tree.bind("<Double-1>", self.on_double_click)
 
         "-------------------------Start Mainloop------------------------------"
         if initial_directories:
@@ -586,63 +620,6 @@ class HDFFolderFiles:
         var = ttk.OptionMenu(frm, self.select_action, None, *_actions)
         var.pack(side=tk.LEFT)
         self.select_action.set(_actions[0])
-
-    def ini_treeview(self):
-        main = ttk.Frame(self.root)
-        main.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
-
-        frm = ttk.Frame(main)
-        frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
-
-        tree = ttk.Treeview(frm, columns=('dataset', 'filepath'), selectmode='browse')
-        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
-
-        var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
-        var.pack(side=tk.LEFT, fill=tk.Y)
-        tree.configure(yscrollcommand=var.set)
-
-        # Populate tree
-        tree.heading("#0", text="File")
-        tree.column("#0", minwidth=50, width=200, anchor='e')
-        tree.heading("dataset", text=address_name(DEFAULT_ADDRESS))
-        tree.column("dataset", width=400)
-        tree['displaycolumns'] = ("dataset", )  # hide filepath column
-        tree.bind("<<TreeviewSelect>>", self.tree_select)
-        tree.bind("<Double-1>", self.on_double_click)
-        return tree
-
-    "======================================================"
-    "================= menu functions ====================="
-    "======================================================"
-
-    def menu_new_window(self):
-        HDFFolderFiles(parent=self.root)
-
-    def menu_folder_viewer(self):
-        HDFFolderViewer(parent=self.root)
-
-    def menu_file_gui(self):
-        HDFViewer(self.filepath.get(), parent=self.root)
-
-    def menu_image_gui(self):
-        from .hdf_image_gui import HDFImageViewer
-        addresses = [
-            os.path.join(
-                self.tree.item(self.tree.parent(item))["text"],  # folder
-                self.tree.item(item)["text"]  # file
-            )
-            for item in self.tree.selection()
-        ]
-        if addresses:
-            HDFImageViewer(addresses[0], parent=self.root)
-        else:
-            HDFImageViewer(self.filepath.get(), parent=self.root)
-
-    def menu_expand_all(self):
-        open_close_all_tree(self.tree, "", True)
-
-    def menu_collapse_all(self):
-        open_close_all_tree(self.tree, "", False)
 
     "======================================================"
     "================ button functions ===================="
@@ -734,9 +711,6 @@ class HDFFolderFiles:
     "================= misc functions ====================="
     "======================================================"
 
-    def _delete_tree(self):
-        self.tree.delete(*self.tree.get_children())
-
     def _add_folder(self, folder_path, extension):
         # check folder_path in list
         if folder_path in [self.tree.item(branch)['text'] for branch in self.tree.get_children()]:
@@ -750,7 +724,7 @@ class HDFFolderFiles:
         self.tree.item(branch, open=True)
         self._thread_update_datasets()
 
-    def _update_datasets(self):
+    def _update_datasets(self, event=None):
         address = self.address.get()
         self.tree.heading("dataset", text=address_name(address))
         for branch in self.tree.get_children():  # folders
@@ -761,3 +735,111 @@ class HDFFolderFiles:
                 filename = self.tree.set(leaf, 'filepath')
                 value = get_hdf_value(filename, address, '..')
                 self.tree.set(leaf, "dataset", value)
+
+
+class HDFFileSearch(_FolderGui):
+    """
+    HDFFolderSearch
+    """
+
+    def __init__(self, initial_directory=None, parent=None):
+
+        self.root = create_root('HDF Folder Search', parent=parent)
+
+        # Variables
+        self.filepath = tk.StringVar(self.root, os.path.abspath('.'))
+        self.extension = tk.StringVar(self.root, EXTENSIONS[0])
+        self.search_box = tk.StringVar(self.root, '*')
+        self.search_matchcase = tk.BooleanVar(self.root, False)
+        self.search_wholeword = tk.BooleanVar(self.root, False)
+
+        "----------- MENU -----------"
+        self.ini_menu()
+
+        "----------- Folder -----------"
+        self.ini_folderpath()
+
+        "----------- Search -----------"
+        self.ini_search()
+
+        "----------- TreeView -----------"
+        self.tree = self.ini_treeview()
+        self.tree['displaycolumns'] = ('modified',)  # hide columns
+
+        "-------------------------Start Mainloop------------------------------"
+        if initial_directory:
+            self.filepath.set(initial_directory)
+        if parent is None:
+            light_theme()
+            self.root.mainloop()
+
+    "======================================================"
+    "================= init functions ====================="
+    "======================================================"
+
+    def ini_folderpath(self):
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Button(frm, text='Browse', command=self.browse_folder, width=8)
+        var.pack(side=tk.LEFT)
+        var = ttk.Button(frm, text=u'\u2191', command=self.up_folder)
+        var.pack(side=tk.LEFT)
+        var = ttk.Entry(frm, textvariable=self.filepath)
+        var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        var = ttk.Button(frm, text='Search', command=self.search, width=8)
+        var.pack(side=tk.LEFT)
+
+    def ini_search(self):
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Label(frm, text='Filename: ')
+        var.pack(side=tk.LEFT)
+
+        var = ttk.Entry(frm, textvariable=self.search_box)
+        var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        var.bind('<Return>', self.search)
+        var.bind('<KP_Enter>', self.search)
+
+        var = ttk.Label(frm, text=' | Extension: ')
+        var.pack(side=tk.LEFT)
+        var = ttk.OptionMenu(frm, self.extension, None, *EXTENSIONS)
+        var.pack(side=tk.LEFT)
+
+        var = ttk.Checkbutton(frm, variable=self.search_matchcase, text='Case')
+        var.pack(side=tk.LEFT)
+        var = ttk.Checkbutton(frm, variable=self.search_wholeword, text='Word')
+        var.pack(side=tk.LEFT)
+
+    "======================================================"
+    "================ general functions ==================="
+    "======================================================"
+
+    def get_filepath(self):
+        """
+        Return filepath and folderpath of current selection
+        :returns hdf_filename: str full filepath or None if selection isn't a file
+        :returns fodlername: str
+        """
+        for iid in self.tree.selection():
+            hdf_filename = self.tree.item(iid)['values'][-1]
+            return hdf_filename, self.filepath.get()
+
+    def search(self, event=None):
+        """
+        perform file search
+        :return:
+        """
+        topdir = self.filepath.get()
+        filename = self.search_box.get()
+        extension = self.extension.get()
+        search_str = filename + extension
+        files = search_filename_in_folder(topdir, search_str, self.search_matchcase.get())
+
+        self._delete_tree()
+        for file in files:
+            time_str = display_timestamp(os.path.getmtime(file))
+            name = str(file).replace(topdir + os.sep, '')
+            self.tree.insert("", tk.END, text=name, values=(time_str, '', '', file))
+
