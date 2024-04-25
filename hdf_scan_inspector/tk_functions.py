@@ -115,12 +115,15 @@ class EditText:
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         self.text = tk.Text(frm, wrap=tk.NONE, width=TEXTWIDTH)
-        self.text.pack(side=tk.TOP, fill=tk.BOTH, expand=tk.YES)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         self.text.insert('1.0', expression)
 
-        var = ttk.Scrollbar(frm, orient=tk.VERTICAL)
+        var = ttk.Scrollbar(frm, orient=tk.VERTICAL, command=self.text.yview)
         var.pack(side=tk.LEFT, fill=tk.Y)
-        var.config(command=self.text.yview)
+        self.text.configure(yscrollcommand=var.set)
+
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         var = ttk.Button(self.root, text='Update', command=self.fun_update)
         var.pack(side=tk.TOP, fill=tk.X)

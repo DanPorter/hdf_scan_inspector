@@ -395,7 +395,7 @@ def find_varnames(expression):
             if type(node) is ast.Name and node.id not in GLOBALS_NAMELIST]
 
 
-def generate_namespace(hdf_file, name_address, varnames=None, default='--'):
+def generate_namespace(hdf_file, name_address, varnames=None, default=np.array('--')):
     """
     Generate namespace dict
 

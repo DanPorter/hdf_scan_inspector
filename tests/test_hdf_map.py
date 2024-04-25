@@ -32,3 +32,4 @@ with h5py.File(f3, 'r') as hdf:
     m = fn.map_hdf(hdf)
 
 print(m.arrays)
+
