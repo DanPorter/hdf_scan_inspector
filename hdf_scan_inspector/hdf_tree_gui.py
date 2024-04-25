@@ -497,9 +497,9 @@ class HDFMapView:
         tree = ttk.Treeview(frm, columns=('name', 'value'), selectmode='browse')
         tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        var = ttk.Scrollbar(frm, orient=tk.VERTICAL)
+        var = ttk.Scrollbar(frm, orient=tk.VERTICAL, command=tree.yview)
         var.pack(side=tk.LEFT, fill=tk.Y)
-        var.config(command=tree.yview)
+        tree.configure(yscrollcommand=var.set)
 
         # Populate tree
         tree.heading("#0", text="HDF Address")

@@ -23,6 +23,7 @@ except ImportError:
 DEFAULT_ADDRESS = "entry1/scan_command"
 EXTENSIONS = ['.nxs', '.hdf', '.hdf5', '.h5']
 DEFAULT_EXTENSION = EXTENSIONS[0]
+MAX_TEXTVIEW_SIZE = 1000
 # parameters for eval
 GLOBALS = {'np': np}
 GLOBALS_NAMELIST = dir(builtins) + list(GLOBALS.keys())
@@ -40,6 +41,9 @@ def load_hdf(hdf_filename):
 
 def address_name(address):
     """Convert hdf address to name"""
+    if isinstance(address, bytes):
+        address = address.decode('ascii')
+    address = address.replace('.', '_')  # remove dots as cant be evaluated
     name = os.path.basename(address)
     return os.path.basename(name) if name == 'value' else name
 
@@ -101,8 +105,11 @@ def hdfobj_string(hdf_filename, address):
         out += '\n'.join([f"{key}: {obj.attrs[key]}" for key in obj.attrs])
         if isinstance(obj, h5py.Dataset):
             out += '\n\n--- Data ---\n'
-            out += f"Shape: {obj.shape}\nSize: {obj.size}\n\n"
-            out += str(obj[()])
+            out += f"Shape: {obj.shape}\nSize: {obj.size}\nValues:\n"
+            if obj.size > MAX_TEXTVIEW_SIZE:
+                out += '---To large to view---'
+            else:
+                out += str(obj[()])
     return out
 
 
@@ -297,7 +304,7 @@ def map_hdf(hdf_file):
     Example:
         with h5py.File('somefile.nxs', 'r') as nx:
             map = map_hdf(nx)
-        nxdata_address = map.classes['NXdata']
+        nxdata_address = map.classes['NXdata'][0]
         start_time_address = map.values['start_time']
         eta_array_address = map.arrays['eta']
         detector_data_address = next(iter(map.image_data))
@@ -305,7 +312,7 @@ def map_hdf(hdf_file):
     :param hdf_file: hdf file object
     :return: HdfMap object with attributes:
         groups = {}  # stores attributes of each group by address
-        classes = {}  # stores group addresses by nx_class
+        classes = {}  # stores list of group addresses by nx_class
         datasets = {}  # stores attributes of each dataset by address
         arrays = {}  # stores array dataset addresses by name
         values = {}  # stores value dataset addresses by name
@@ -325,8 +332,10 @@ def map_hdf(hdf_file):
     # Defaults
     try:
         axes_datasets, signal_dataset = get_nexus_axes_datasets(hdf_file)
-        hdf_map.arrays['axes'] = axes_datasets[0].name
-        hdf_map.arrays['signal'] = signal_dataset.name
+        if axes_datasets[0].name in hdf_file:
+            hdf_map.arrays['axes'] = axes_datasets[0].name
+        if signal_dataset.name in hdf_file:
+            hdf_map.arrays['signal'] = signal_dataset.name
     except KeyError:
         pass
 
@@ -336,7 +345,7 @@ def map_hdf(hdf_file):
             link = hdf_group.get(key, getlink=True)
             address = top_address + '/' + key
             name = address_name(address)
-            altname = obj.attrs['local_name'] if 'local_name' in obj.attrs else name
+            altname = address_name(obj.attrs['local_name']) if 'local_name' in obj.attrs else name
 
             # Group
             if isinstance(obj, h5py.Group):
@@ -348,7 +357,9 @@ def map_hdf(hdf_file):
                     nx_class = 'Group'  # if object doesn't have attrs
                 hdf_map.groups[address] = (nx_class, name)
                 if nx_class not in hdf_map.classes:
-                    hdf_map.classes[nx_class] = address
+                    hdf_map.classes[nx_class] = [address]
+                else:
+                    hdf_map.classes[nx_class].append(address)
                 recur_func(obj, address)
 
             # Dataset
@@ -356,12 +367,14 @@ def map_hdf(hdf_file):
                 hdf_map.datasets[address] = (name, obj.size, obj.shape, dict(obj.attrs))
                 if obj.ndim >= 3:
                     hdf_map.image_data[address] = (name, obj.size, obj.shape, dict(obj.attrs))
+                    hdf_map.arrays[name] = address
+                    hdf_map.arrays[altname] = address
                 elif obj.ndim > 0:
                     hdf_map.arrays[name] = address
-                    # hdf_map.arrays[altname] = address
+                    hdf_map.arrays[altname] = address
                 else:
                     hdf_map.values[name] = address
-                    # hdf_map.values[altname] = address
+                    hdf_map.values[altname] = address
 
     # map file
     recur_func(hdf_file)
@@ -486,6 +499,35 @@ def get_nexus_axes_datasets(hdf_object):
     ]
     # find the default NXdata group
     nx_data = nx_entry[nx_entry.attrs["default"] if "default" in nx_entry.attrs else "measurement"]
+    # find the axes field(s)
+    if isinstance(nx_data.attrs["axes"], (str, bytes)):
+        axes_datasets = [nx_data[nx_data.attrs["axes"]]]
+    else:
+        axes_datasets = [nx_data[_axes] for _axes in nx_data.attrs["axes"]]
+    # find the signal field
+    signal_dataset = nx_data[nx_data.attrs["signal"]]
+    return axes_datasets, signal_dataset
+
+
+def get_strict_nexus_axes_datasets(hdf_object):
+    """
+    Nexus compliant method of finding default plotting axes in hdf files
+     - find "default" entry group in top File group
+     - find "default" data group in entry
+     - find "axes" attr in default data
+     - find "signal" attr in default data
+     - generate addresses of signal and axes
+     if not nexus compliant, raises KeyError
+    This method is very fast but only works on nexus compliant files
+    :param hdf_object: open HDF file object, i.e. h5py.File(...)
+    :return axes_datasets: list of dataset objects for axes
+    :return signal_dataset: dataset object for plot axis
+    """
+    # From: https://manual.nexusformat.org/examples/python/plotting/index.html
+    # find the default NXentry group
+    nx_entry = hdf_object[hdf_object.attrs["default"]]
+    # find the default NXdata group
+    nx_data = nx_entry[nx_entry.attrs["default"]]
     # find the axes field(s)
     if isinstance(nx_data.attrs["axes"], (str, bytes)):
         axes_datasets = [nx_data[nx_data.attrs["axes"]]]

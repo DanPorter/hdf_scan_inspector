@@ -144,15 +144,25 @@ class _FolderGui:
     def menu_collapse_all(self):
         open_close_all_tree(self.tree, "", False)
 
+    def menu_copy_path(self):
+        filepath, folderpath = self.get_filepath()
+        self.root.clipboard_clear()
+        if filepath:
+            self.root.clipboard_append(filepath)
+        else:
+            self.root.clipboard_append(folderpath)
+
     def right_click_menu(self, frame, tree):
         # right-click menu - file options
         m_file = tk.Menu(frame, tearoff=0)
+        m_file.add_command(label="Copy", command=self.menu_copy_path)
         m_file.add_command(label="open Treeview", command=self.menu_file_gui)
         m_file.add_command(label="open Plot", command=self.menu_plot_gui)
         m_file.add_command(label="open Image", command=self.menu_image_gui)
         m_file.add_command(label="open Namespace", command=self.menu_namespace_gui)
         # right-click menu - folder options
         m_folder = tk.Menu(frame, tearoff=0)
+        m_folder.add_command(label="Copy", command=self.menu_copy_path)
         m_folder.add_command(label="Open Folder Datasets", command=self.menu_folder_files)
         m_folder.add_command(label="Open Folder Plots", command=self.menu_folder_plot)
 
