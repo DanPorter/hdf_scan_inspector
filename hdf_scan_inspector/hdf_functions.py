@@ -79,12 +79,14 @@ def list_path_time_files(directory, extension='.nxs'):
 
 def get_hdf_value(hdf_filename, hdf_address, default_value=''):
     """Open HDF file and return value from single dataset"""
-    with load_hdf(hdf_filename) as hdf:
-        dataset = hdf.get(hdf_address)
-        if isinstance(dataset, h5py.Dataset):
-            if dataset.size > 1:
-                return f"{dataset.dtype} {dataset.shape}"
-            return dataset[()]
+    try:
+        with load_hdf(hdf_filename) as hdf:
+            dataset = hdf.get(hdf_address)
+            if isinstance(dataset, h5py.Dataset):
+                if dataset.size > 1:
+                    return f"{dataset.dtype} {dataset.shape}"
+                return dataset[()]
+    finally:
         return default_value
 
 

@@ -96,6 +96,48 @@ def search_tree(treeview, branch="", query="entry", match_case=False, whole_word
             treeview.see(child)
 
 
+def right_click_menu(frame, tree):
+    """
+    Create right-click context menu for hdf_tree objects
+    :param frame:
+    :param tree:
+    :return:
+    """
+
+    def copy_address():
+        for iid in tree.selection():
+            frame.master.clipboard_clear()
+            frame.master.clipboard_append(tree.item(iid)['text'])
+
+    def copy_name():
+        for iid in tree.selection():
+            frame.master.clipboard_clear()
+            frame.master.clipboard_append(tree.item(iid)['values'][-2])
+
+    def copy_value():
+        for iid in tree.selection():
+            frame.master.clipboard_clear()
+            frame.master.clipboard_append(tree.item(iid)['values'][-1])
+
+    # right-click menu - file options
+    m = tk.Menu(frame, tearoff=0)
+    m.add_command(label="Copy address", command=copy_address)
+    m.add_command(label="Copy name", command=copy_name)
+    m.add_command(label="Copy value", command=copy_value)
+
+    def menu_popup(event):
+        # select item
+        iid = tree.identify_row(event.y)
+        if iid:
+            tree.selection_set(iid)
+            try:
+                m.tk_popup(event.x_root, event.y_root)
+            finally:
+                m.grab_release()
+
+    return menu_popup
+
+
 class HDFViewer:
     """
     HDF Viewer - display cascading hierarchical data within HDF file in ttk GUI
@@ -238,6 +280,7 @@ class HDFViewer:
         tree.heading("value", text="Value")
         tree.bind("<<TreeviewSelect>>", self.tree_select)
         tree.bind("<Double-1>", self.on_double_click)
+        tree.bind("<Button-3>", right_click_menu(frm, tree))
 
         "----------- TextBox -----------"
         frm = ttk.Frame(main)
@@ -508,6 +551,7 @@ class HDFMapView:
         tree.column("#0", width=400)
         tree.column("name", width=100)
         tree.column("value", width=100)
+        tree.bind("<Button-3>", right_click_menu(frm, tree))
 
         with load_hdf(hdf_filename) as hdf:
             hdfmap = map_hdf(hdf)
