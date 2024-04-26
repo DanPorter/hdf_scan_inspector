@@ -56,7 +56,7 @@ def list_files(folder_directory, extension='.nxs'):
     """Return list of files in directory with extension, returning list of full file paths"""
     # return [os.path.join(folder_directory, file) for file in os.listdir(folder_directory) if file.endswith(extension)]
     return sorted(
-        (file.path for file in os.scandir(folder_directory) if file.name.endswith(extension)),
+        (file.path for file in os.scandir(folder_directory) if file.is_file() and file.name.endswith(extension)),
         key=lambda x: os.path.getmtime(x)
     )
 
@@ -72,7 +72,7 @@ def list_path_time_files(directory, extension='.nxs'):
         if f.is_dir():
             try:
                 folders.append((f.path, f.stat().st_mtime, len(list_files(f.path, extension))))
-            except PermissionError:
+            except PermissionError or FileNotFoundError:
                 pass
     return folders
 
