@@ -84,6 +84,38 @@ def open_close_all_tree(treeview, branch="", openstate=True):
         open_close_all_tree(treeview, child, openstate)  # recursively open children
 
 
+def treeview_sort_column(treeview: ttk.Treeview, col, reverse, sort_col=None):
+    """
+    Function to sort columns in ttk.Treeview,
+        tree.heading("#0", command=lambda _col="#0": treeview_sort_column(tree, _col, False))
+    :param treeview: ttk.Treeview instance
+    :param col: str, column specifier for items to sort
+    :param reverse: Bool, sort direction
+    :param sort_col: str or None, sort alternative column
+    :return:
+    """
+    if sort_col is None:
+        sort_col = col
+    if col == "#0":
+        def item(iid):
+            return treeview.item(iid)['text']
+    else:
+        def item(iid):
+            return treeview.set(iid, col)
+
+    items = [(item(iid), iid) for iid in treeview.get_children('')]
+    items.sort(reverse=reverse)
+
+    # rearrange items in sorted positions
+    for index, (val, k) in enumerate(items):
+        treeview.move(k, '', index)
+        if treeview.item(k)['text'] == '..':  # keep at top of column
+            treeview.move(k, '', 0)
+
+    # reverse sort next time
+    treeview.heading(sort_col, command=lambda _col=col: treeview_sort_column(treeview, _col, not reverse, sort_col))
+
+
 def show_error(message, parent=None):
     """Display and raise error"""
     messagebox.showwarning(

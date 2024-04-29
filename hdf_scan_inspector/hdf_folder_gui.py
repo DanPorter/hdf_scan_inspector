@@ -17,8 +17,10 @@ from hdf_scan_inspector.hdf_functions import EXTENSIONS, DEFAULT_ADDRESS, addres
     list_files, get_hdf_value, list_path_time_files, display_timestamp
 from hdf_scan_inspector.hdf_functions import search_filename_in_folder, search_hdf_files
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree, select_folder
-from hdf_scan_inspector.tk_functions import light_theme, dark_theme
+from hdf_scan_inspector.tk_functions import light_theme, dark_theme, treeview_sort_column
 from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector
+
+COLUMNS = ('modified', 'modified_time', 'files', 'dataset', 'filepath')
 
 
 class _FolderGui:
@@ -61,7 +63,7 @@ class _FolderGui:
         frm = ttk.Frame(main)
         frm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
-        tree = ttk.Treeview(frm, columns=('modified', 'files', 'dataset', 'filepath'), selectmode='browse')
+        tree = ttk.Treeview(frm, columns=COLUMNS)
         tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
 
         var = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
@@ -69,15 +71,23 @@ class _FolderGui:
         tree.configure(yscrollcommand=var.set)
 
         # Populate tree
-        tree.heading("#0", text="Folder")
+        tree.heading("#0", text="Folder",
+                     command=lambda _col="#0": treeview_sort_column(tree, _col, False))
         tree.column("#0", width=200)
-        tree.heading("modified", text='Modified')
+
+        tree.heading("modified", text='Modified',
+                     command=lambda _col="modified_time": treeview_sort_column(tree, _col, True, "modified"))
         tree.column("modified", width=200)
-        tree.heading("files", text='Files')
+
+        tree.heading("files", text='Files',
+                     command=lambda _col="files": treeview_sort_column(tree, _col, False))
         tree.column("files", width=100)
-        tree.heading("dataset", text=address_name(DEFAULT_ADDRESS))
+
+        tree.heading("dataset", text=address_name(DEFAULT_ADDRESS),
+                     command=lambda _col="files": treeview_sort_column(tree, _col, False))
         tree.column("dataset", width=400)
 
+        tree['displaycolumns'] = ('modified', 'files', 'dataset')  # hide columns
         tree.bind("<Button-3>", self.right_click_menu(frm, tree))
         return tree
 
@@ -182,6 +192,7 @@ class _FolderGui:
                         m_folder.tk_popup(event.x_root, event.y_root)
                     finally:
                         m_file.grab_release()
+
         return menu_popup
 
     "======================================================"
@@ -358,7 +369,7 @@ class HDFFolderViewer(_FolderGui):
         for iid in self.tree.selection():
             item = self.tree.item(iid)
             parent = self.tree.item(self.tree.parent(iid))
-            if item['values'][1] == '' and item['text'] != '..':  # item is a file
+            if self.tree.set(iid, 'files') == '' and item['text'] != '..':  # item is a file
                 hdf_filename = os.path.join(self.filepath.get(), parent['text'], item['text'])
             else:  # item is a folder
                 foldername = os.path.join(foldername, item['text'])
@@ -409,7 +420,7 @@ class HDFFolderViewer(_FolderGui):
                     self.tree.insert(item, tk.END, text=os.path.basename(file), values=(mtime, '', ''))
                 if self.read_datasets.get():
                     self._thread_update_datasets()
-                print(f"Expanding took {time.time()-mytime:.3g} s")
+                print(f"Expanding took {time.time() - mytime:.3g} s")
 
     def on_double_click(self, event=None):
         """Open a folder or open a file in a new window"""
@@ -483,19 +494,18 @@ class HDFFolderViewer(_FolderGui):
     def _list_folders(self, event=None):
         name_time_nfiles = list_path_time_files(self.filepath.get(), self.extension.get())
         self._delete_tree()
-        self.tree.insert("", tk.END, text="..", values=('', '', ''))
+        # ('modified', 'modified_time', 'files', 'dataset', 'filepath')
+        self.tree.insert("", tk.END, text="..", values=('', '', '', '', ''))
         hide_hidden = not self.show_hidden.get()
         for name, mtime, nfiles in name_time_nfiles:
             name_str = os.path.basename(name)
             if hide_hidden and (name_str.startswith('.') or name_str.startswith('_')):
                 continue
             time_str = display_timestamp(mtime)
-            if nfiles > 0:
-                entry = self.tree.insert("", tk.END, text=name_str, values=(time_str, nfiles, ''))
+            entry = self.tree.insert("", tk.END, text=name_str, values=(time_str, mtime, nfiles, '', name))
+            if nfiles > 0:  # add subdirectory for files
                 self.tree.insert(entry, tk.END)  # empty
                 self.tree.item(entry, open=False)
-            else:
-                self.tree.insert("", tk.END, text=name_str, values=(time_str, nfiles, ''))
 
     def _update_datasets(self, event=None):
         """Update dataset values column for hdf files under open folders"""
@@ -678,25 +688,16 @@ class HDFFolderFiles(_FolderGui):
 
     def tree_select(self, event=None):
         """on selecting a file, change the filepath entry"""
-        addresses = [
-            self.tree.item(item)["values"][1]
-            for item in self.tree.selection()
-        ]
-        if addresses:
-            self.filepath.set(os.path.dirname(addresses[0]))
+        for address in [self.tree.set(iid, 'filepath') for iid in self.tree.selection()]:
+            self.filepath.set(os.path.dirname(address))
 
     def on_double_click(self, event=None):
-        addresses = [
-            self.tree.item(item)["values"][1]
-            for item in self.tree.selection()
-        ]
-        if addresses:
-            select_action = self.select_action.get()
-            if select_action == 'Image Viewer':
+        for address in [self.tree.set(iid, 'filepath') for iid in self.tree.selection()]:
+            if self.select_action.get() == 'Image Viewer':
                 from .hdf_image_gui import HDFImageViewer
-                HDFImageViewer(addresses[0], parent=self.root)
+                HDFImageViewer(address, parent=self.root)
             else:
-                HDFViewer(addresses[0], parent=self.root)
+                HDFViewer(address, parent=self.root)
 
     def fun_search(self, event=None):
         self.tree.selection_remove(self.tree.selection())
@@ -709,7 +710,7 @@ class HDFFolderFiles(_FolderGui):
             # folder = self.tree.item(branch)['text']
             for leaf in self.tree.get_children(branch):  # files
                 file = self.tree.item(leaf)['text']
-                value = self.tree.item(leaf)['values'][0]
+                value = self.tree.set(leaf, 'dataset')
                 test = f"{file} {value}"
                 test = test if match_case else test.lower()
                 test = test.split() if whole_word else test
@@ -728,9 +729,11 @@ class HDFFolderFiles(_FolderGui):
         # Get list of files and dataset values
         file_list = list_files(folder_path, extension)
         # Create folder path branch
-        branch = self.tree.insert("", tk.END, text=os.path.basename(folder_path), values=('', folder_path))
+        # ('modified', 'modified_time', 'files', 'dataset', 'filepath')
+        values = ('', '', '', '')
+        branch = self.tree.insert("", tk.END, text=os.path.basename(folder_path), values=values + (folder_path,))
         for file_path in file_list:
-            self.tree.insert(branch, tk.END, text=os.path.basename(file_path), values=('', file_path))
+            self.tree.insert(branch, tk.END, text=os.path.basename(file_path), values=values + (file_path,))
         self.tree.item(branch, open=True)
         self._thread_update_datasets()
 
@@ -833,7 +836,7 @@ class HDFFileSearch(_FolderGui):
         :returns fodlername: str
         """
         for iid in self.tree.selection():
-            hdf_filename = self.tree.item(iid)['values'][-1]
+            hdf_filename = self.tree.set(iid, 'filepath')
             return hdf_filename, self.filepath.get()
 
     def search(self, event=None):
@@ -849,7 +852,8 @@ class HDFFileSearch(_FolderGui):
 
         self._delete_tree()
         for file in files:
-            time_str = display_timestamp(os.path.getmtime(file))
+            mtime = os.path.getmtime(file)
+            time_str = display_timestamp(mtime)
             name = str(file).replace(topdir + os.sep, '')
-            self.tree.insert("", tk.END, text=name, values=(time_str, '', '', file))
-
+            # ('modified', 'modified_time', 'files', 'dataset', 'filepath')
+            self.tree.insert("", tk.END, text=name, values=(time_str, mtime, '', '', file))
