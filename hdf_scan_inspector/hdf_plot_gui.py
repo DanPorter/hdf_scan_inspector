@@ -23,7 +23,8 @@ from hdf_scan_inspector.hdf_tree_gui import HDFViewer, dataset_selector, HDFMapV
 
 # parameters
 DEFAULT_CONFIG = "{filename}\n{filepath}\ncmd = {scan_command}" + \
-                 "\naxes = {axes_address}\nsignal = {signal_address}\nshape = {axes.shape}"
+                 "\naxes = {_axes}\nsignal = {_signal}\nshape = {axes.shape}"
+MAX_FILELIST_LOAD = 10
 
 
 class HDFFolderPlotViewer:
@@ -47,6 +48,7 @@ class HDFFolderPlotViewer:
         self.xaxis = tk.StringVar(self.root, '')
         self.yaxis = tk.StringVar(self.root, '')
         self.terminal_entry = tk.StringVar(self.root, '')
+        self.active_threads = []
         self._folder_modified = None
         self._text_expression = text_expression
         self._exiting_program = False  # used when closing threads
@@ -57,7 +59,7 @@ class HDFFolderPlotViewer:
         menu = {
             'File': {
                 'Select File': self.select_folder,
-                'Reload': self.event_add_folder,
+                'Reload': self.add_folder,
                 'Open File GUI': self.menu_file_gui,
                 'Open Plot GUI': self.menu_plot_gui,
                 'Open image GUI': self.menu_image_gui,
@@ -95,14 +97,13 @@ class HDFFolderPlotViewer:
         if folder:
             self.filepath.set(folder)
         if file_list is None:
-            file_list = self.get_recent_files()
-        t1 = threading.Thread(target=self.populate_tree, args=(file_list, ))
-        t1.start()
-        self.populate_tree(file_list)
+            file_list = self.get_recent_files()[::-1]
+
+        self.populate_file_list(file_list)
         self.item_select(0)
-        t2 = threading.Thread(target=self.poll_files)  # repetative check
-        t2.start()
-        self.active_threads = [t1, t2]
+        thread = threading.Thread(target=self.poll_files)  # repetative check
+        thread.start()
+        self.active_threads.append(thread)
 
         if parent is None:
             light_theme()
@@ -121,8 +122,8 @@ class HDFFolderPlotViewer:
 
         var = ttk.Entry(frm, textvariable=self.filepath)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
-        var.bind('<Return>', self.event_add_folder)
-        var.bind('<KP_Enter>', self.event_add_folder)
+        var.bind('<Return>', lambda _e: self.add_folder())
+        var.bind('<KP_Enter>', lambda _e: self.add_folder())
 
         "----------- Extension -----------"
         var = ttk.Label(frm, text='Extension: ')
@@ -140,8 +141,8 @@ class HDFFolderPlotViewer:
         var = ttk.Entry(frm, textvariable=self.xaxis)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
         # var.bind('<KeyRelease>', self.fun_expression_reset)
-        var.bind('<Return>', self.tree_select)
-        var.bind('<KP_Enter>', self.tree_select)
+        var.bind('<Return>', lambda _e: self.plot_data())
+        var.bind('<KP_Enter>', lambda _e: self.plot_data())
 
         frm = ttk.Frame(self.root)
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
@@ -152,8 +153,8 @@ class HDFFolderPlotViewer:
         var = ttk.Entry(frm, textvariable=self.yaxis)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
         # var.bind('<KeyRelease>', self.fun_expression_reset)
-        var.bind('<Return>', self.tree_select)
-        var.bind('<KP_Enter>', self.tree_select)
+        var.bind('<Return>', lambda _e: self.plot_data())
+        var.bind('<KP_Enter>', lambda _e: self.plot_data())
 
     def ini_file_list(self, frame):
         frm = ttk.Frame(frame)
@@ -172,7 +173,7 @@ class HDFFolderPlotViewer:
         tree.heading("dataset", text='')
         tree.column("dataset", width=400)
         tree['displaycolumns'] = ()  # hide columns
-        tree.bind("<<TreeviewSelect>>", self.tree_select)
+        tree.bind("<<TreeviewSelect>>", lambda event: self.file_select())
         tree.bind("<Double-1>", self.tree_double_click)
 
         # right-click menu
@@ -295,9 +296,11 @@ class HDFFolderPlotViewer:
     def get_recent_files(self):
         """returns list of files created since last modified time stamp"""
         folder_path = self.filepath.get()
-        if not folder_path:
+        try:
+            mod_time = os.stat(folder_path).st_mtime
+        except FileNotFoundError:
             return []
-        mod_time = os.stat(folder_path).st_mtime
+
         if self._folder_modified is None:
             self._folder_modified = mod_time
             return list_files(self.filepath.get(), self.extension.get())
@@ -313,15 +316,25 @@ class HDFFolderPlotViewer:
             return files
         return []
 
-    def populate_tree(self, filepath_list):
+    def _add_files(self, filepath_list: list[str], index: tk.END):
         for filepath in filepath_list:
-            self.file_list.insert("", 0, text=address_name(filepath), values=('', filepath))
+            self.file_list.insert("", index, text=os.path.basename(filepath), values=('', filepath))
+
+    def populate_file_list(self, filepath_list: list[str]):
+        """list files in file list tree, from top down."""
+        self._add_files(filepath_list[:MAX_FILELIST_LOAD], tk.END)
+        print(filepath_list[:MAX_FILELIST_LOAD])
+        if len(filepath_list) > MAX_FILELIST_LOAD:
+            print(filepath_list[MAX_FILELIST_LOAD:])
+            thread = threading.Thread(target=self._add_files, args=(filepath_list[MAX_FILELIST_LOAD:], tk.END))
+            thread.start()
+            self.active_threads.append(thread)
 
     def update_files(self):
         """update recent files to file_list"""
         recent_files = self.get_recent_files()
         self.debug_msg(f'folder_modified: {self._folder_modified}, recent_files: {recent_files}')
-        self.populate_tree(recent_files)
+        self._add_files(recent_files, 0)
 
     def poll_files(self):
         while True:
@@ -329,12 +342,47 @@ class HDFFolderPlotViewer:
             self.update_files()
             time.sleep(self._update_time)
 
+    def add_folder(self):
+        self.file_list.delete(*self.file_list.get_children())
+        self._folder_modified = None
+        file_list = self.get_recent_files()[::-1]
+        self.populate_file_list(file_list)
+        self.item_select(0)
+
+    def plot_data(self):
+        self.reset_plot()
+        for item in self.file_list.selection():
+            file_path = self.file_list.set(item, 'filepath')
+            with load_hdf(file_path) as hdf:
+                m = map_hdf(hdf)
+                xvals, yvals = self.gen_xy(hdf, m)
+                lab = self.file_list.item(item)['text']
+                self.ax1.plot(xvals, yvals, label=lab)
+        if len(self.file_list.selection()) == 1:
+            ttl = self.file_list.item(self.file_list.selection()[0])["text"]
+            self.ax1.set_title(ttl)
+        elif len(self.file_list.selection()) > 1:
+            self.ax1.legend()
+        self.update_plot()
+
+    def file_select(self):
+        for item in self.file_list.selection():
+            file_path = self.file_list.set(item, 'filepath')
+            with load_hdf(file_path) as hdf:
+                m = map_hdf(hdf)
+                self.gen_text(hdf, m)
+                if 'axes' in m.arrays:  # and not self.xaxis.get():
+                    self.xaxis.set(m.arrays['axes'])
+                if 'signal' in m.arrays:  # and not self.yaxis.get():
+                    self.yaxis.set(m.arrays['signal'])
+        self.plot_data()
+
     def item_select(self, index=0):
         children = self.file_list.get_children()
         if children:
             child_id = children[index]
             self.file_list.focus(child_id)
-            self.file_list.selection_set(child_id)
+            self.file_list.selection_set(child_id)  # runs <<TreeViewSelect>> == self.file_select
 
     def gen_text(self, hdf_file, hdf_map=None):
         try:
@@ -350,7 +398,7 @@ class HDFFolderPlotViewer:
         """Double-click on text display => open config str"""
         try:
             self._text_expression = EditText(self._text_expression, self.root).show()
-            self.tree_select()
+            self.file_select()
         except KeyError as ke:
             show_error(
                 message=f"Item not recognised: {ke}",
@@ -380,9 +428,8 @@ class HDFFolderPlotViewer:
         self.ax1.set_title('')
         self.ax1.set_prop_cycle(None)  # reset colours
         self.ax1.legend([]).set_visible(False)
-        for obj in self.plot_list:
+        for obj in self.ax1.lines:
             obj.remove()
-        self.plot_list = []
 
     def update_plot(self):
         self.ax1.relim()
@@ -394,12 +441,6 @@ class HDFFolderPlotViewer:
     "======================================================"
     "================= event functions ===================="
     "======================================================"
-
-    def event_add_folder(self, event=None):
-        self.file_list.delete(*self.file_list.get_children())
-        self._folder_modified = None
-        self.update_files()
-        self.item_select(0)
 
     def fun_xaxis(self):
         addresses = [self.file_list.item(item)["values"][1] for item in self.file_list.selection()]
@@ -429,8 +470,7 @@ class HDFFolderPlotViewer:
         foldername = select_folder(self.root)
         if foldername:
             self.filepath.set(foldername)
-            self._folder_modified = None
-            self.update_files()
+            self.add_folder()
 
     def fun_terminal(self, event=None):
         expression = self.terminal_entry.get()
@@ -454,29 +494,6 @@ class HDFFolderPlotViewer:
     def fun_terminal_cls(self, event=None):
         self.terminal.delete('1.0', tk.END)
 
-    def tree_select(self, event=None):
-        self.reset_plot()
-        for item in self.file_list.selection():
-            file_path = self.file_list.item(item)["values"][1]
-            with load_hdf(file_path) as hdf:
-                m = map_hdf(hdf)
-                self.gen_text(hdf, m)
-                # self.default_axes(hdf)
-                if 'axes' in m.arrays and not self.xaxis.get():
-                    self.xaxis.set(m.arrays['axes'])
-                if 'signal' in m.arrays and not self.yaxis.get():
-                    self.yaxis.set(m.arrays['signal'])
-                xvals, yvals = self.gen_xy(hdf, m)
-                lab = self.file_list.item(item)['text']
-                ln, = self.ax1.plot(xvals, yvals, label=lab)
-                self.plot_list.append(ln)
-        if len(self.file_list.selection()) == 1:
-            ttl = self.file_list.item(self.file_list.selection()[0])["text"]
-            self.ax1.set_title(ttl)
-        elif len(self.file_list.selection()) > 1:
-            self.ax1.legend()
-        self.update_plot()
-
     def tree_double_click(self, event=None):
         """Double-click on file item => open HDF Tree Viewer"""
         from hdf_scan_inspector.hdf_tree_gui import HDFViewer
@@ -488,7 +505,7 @@ class HDFFolderPlotViewer:
         """Double-click on text display => open config str"""
         try:
             self._text_expression = EditText(self._text_expression, self.root).show()
-            self.tree_select()
+            self.file_select()
         except KeyError as ke:
             show_error(
                 message=f"Item not recognised: {ke}",
@@ -703,10 +720,10 @@ class HDFPlotViewer:
             if 'signal' in m.arrays and not self.yaxis.get():
                 self.yaxis.set(m.arrays['signal'])
             xvals, yvals = self.gen_xy(hdf, m)
-            lab = address_name(filepath)
+            lab = os.path.basename(filepath)
             ln, = self.ax1.plot(xvals, yvals, label=lab)
             self.plot_list.append(ln)
-        ttl = address_name(filepath)
+        ttl = os.path.basename(filepath)
         self.ax1.set_title(ttl)
         self.update_plot()
 

@@ -20,6 +20,7 @@ By Dan Porter
 Diamond Light Source Ltd
 2024
 """
+import os.path
 
 import h5py
 import time
@@ -70,7 +71,7 @@ def populate_tree(treeview, hdf_filename, openstate=True):
 
     with load_hdf(hdf_filename) as hdf:
         # add top level file group
-        treeview.insert("", tk.END, text='/', values=('File', address_name(hdf_filename), ''))
+        treeview.insert("", tk.END, text='/', values=('File', os.path.basename(hdf_filename), ''))
         recur_func(hdf, "")
     return datasets
 
@@ -99,9 +100,9 @@ def search_tree(treeview, branch="", query="entry", match_case=False, whole_word
 def right_click_menu(frame, tree):
     """
     Create right-click context menu for hdf_tree objects
-    :param frame:
-    :param tree:
-    :return:
+    :param frame: tkinter frame
+    :param tree: ttk.Treeview object
+    :return: menu_popup function
     """
 
     def copy_address():
@@ -143,7 +144,7 @@ class HDFViewer:
     HDF Viewer - display cascading hierarchical data within HDF file in ttk GUI
         HDFViewer("filename.h5")
     Simple ttk interface for browsing HDF file structures.
-     - Click Browse or File>Select File to pick a HDF, H5 or NeXus file
+     - Click Browse or File>Select File to pick an HDF, H5 or NeXus file
      - Collapse and expand the tree to view the file structure
      - Search for addresses using the search bar
      - Click on a dataset or group to view stored attributes and data
@@ -201,6 +202,7 @@ class HDFViewer:
         "-------- Start Mainloop ------"
         if hdf_filename:
             self.filepath.set(hdf_filename)
+            self.root.title = f"HDFView: {os.path.basename(hdf_filename)}"
             self.populate_tree()
         if parent is None:
             light_theme()
@@ -531,7 +533,11 @@ class HDFMapView:
 
     def __init__(self, hdf_filename, parent):
 
-        filename = address_name(hdf_filename)
+        self.search_str = ""
+        self.search_time = time.time()
+        self.search_reset = 3.0  # seconds
+
+        filename = os.path.basename(hdf_filename)
         self.root = create_root(f'Datasets: {filename}', parent=parent)
 
         frm = ttk.Frame(self.root)
@@ -552,6 +558,7 @@ class HDFMapView:
         tree.column("name", width=100)
         tree.column("value", width=100)
         tree.bind("<Button-3>", right_click_menu(frm, tree))
+        tree.bind('<KeyPress>', self.on_key_press)
 
         with load_hdf(hdf_filename) as hdf:
             hdfmap = map_hdf(hdf)
@@ -564,7 +571,116 @@ class HDFMapView:
                 values = (name, val)
                 # datasets.append(address)
                 tree.insert("", tk.END, text=address, values=values)
+        self.tree = tree
 
         var = ttk.Button(self.root, text='Close', command=self.root.destroy)
         var.pack(side=tk.TOP, fill=tk.X, expand=tk.YES)
 
+    def on_key_press(self, event):
+        # reset search str after reset time
+        ctime = time.time()
+        if ctime > self.search_time + self.search_reset:
+            self.search_str = ""
+        # update search time, add key to query
+        self.search_time = ctime
+        self.search_str += event.char
+
+        def search(branch):
+            for child in self.tree.get_children(branch):
+                name = self.tree.set(child, 'name')
+                if name.lower().startswith(self.search_str):
+                    self.tree.selection_add(child)
+                    self.tree.see(child)
+                    return
+                search(child)
+        self.tree.selection_remove(self.tree.selection())
+        search("")
+
+
+class NexusClassView:
+    """
+    HDF Dataset Map Viewer
+    Creates a list of the datasets in the HDF file and the namespace hdf_name associated.
+    :param hdf_filename: str hdf filepath
+    :param parent: tk root
+    """
+
+    def __init__(self, hdf_filename, parent):
+
+        self.search_str = ""
+        self.search_time = time.time()
+        self.search_reset = 3.0  # seconds
+
+        filename = os.path.basename(hdf_filename)
+        self.root = create_root(f'Nexus Classes: {filename}', parent=parent)
+
+        frm = ttk.Frame(self.root)
+        frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+
+        tree = ttk.Treeview(frm, columns=('name', 'value'), selectmode='browse')
+        tree.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+
+        var = ttk.Scrollbar(frm, orient=tk.VERTICAL, command=tree.yview)
+        var.pack(side=tk.LEFT, fill=tk.Y)
+        tree.configure(yscrollcommand=var.set)
+
+        # Populate tree
+        tree.heading("#0", text="Nexus Class")
+        tree.heading("name", text="Name")
+        tree.heading("value", text="Value")
+        tree.column("#0", width=300)
+        tree.column("name", width=200)
+        tree.column("value", width=200)
+        tree['displaycolumns'] = ('value', )  # hide columns
+        tree.bind("<Button-3>", right_click_menu(frm, tree))
+        tree.bind('<KeyPress>', self.on_key_press)
+
+        with load_hdf(hdf_filename) as hdf:
+            hdfmap = map_hdf(hdf)
+            for name, address_list in hdfmap.classes.items():
+                branch = tree.insert("", tk.END, text=name)
+                for address in address_list:
+                    if address not in hdf:
+                        continue
+                    leaf = tree.insert(branch, tk.END, text=address)
+                    for attribute, value in hdf[address].attrs.items():
+                        # try:
+                        #     attribute = '@' + attribute
+                        # except TypeError:
+                        #     attribute = '@' + attribute.decode()  # convert bytes to str
+                        tree.insert(leaf, tk.END, text='@' + attribute, values=('', str(value)))
+                    for child in hdf[address].keys():
+                        dataset = hdf[address].get(child)
+                        try:
+                            if dataset.shape:
+                                val = f"{dataset.dtype} {dataset.shape}"
+                            else:
+                                val = str(dataset[()])
+                            values = (address_name(dataset.name), val)
+                        except AttributeError:
+                            values = ('', '')
+                        tree.insert(leaf, tk.END, text=child, values=values)
+        self.tree = tree
+
+        var = ttk.Button(self.root, text='Close', command=self.root.destroy)
+        var.pack(side=tk.TOP, fill=tk.X, expand=tk.YES)
+
+    def on_key_press(self, event):
+        # reset search str after reset time
+        ctime = time.time()
+        if ctime > self.search_time + self.search_reset:
+            self.search_str = ""
+        # update search time, add key to query
+        self.search_time = ctime
+        self.search_str += event.char
+
+        def search(branch):
+            for child in self.tree.get_children(branch):
+                name = self.tree.set(child, 'name')
+                if name.lower().startswith(self.search_str):
+                    self.tree.selection_add(child)
+                    self.tree.see(child)
+                    return
+                search(child)
+        self.tree.selection_remove(self.tree.selection())
+        search("")

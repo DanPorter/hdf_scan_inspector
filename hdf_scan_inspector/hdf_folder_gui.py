@@ -18,7 +18,7 @@ from hdf_scan_inspector.hdf_functions import EXTENSIONS, DEFAULT_ADDRESS, addres
 from hdf_scan_inspector.hdf_functions import search_filename_in_folder, search_hdf_files
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree, select_folder
 from hdf_scan_inspector.tk_functions import light_theme, dark_theme, treeview_sort_column
-from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector
+from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector, NexusClassView
 
 COLUMNS = ('modified', 'modified_time', 'files', 'dataset', 'filepath')
 
@@ -28,6 +28,11 @@ class _FolderGui:
     root = None
     tree = None
     filepath = None
+
+    def __init__(self):
+        self.search_str = ""
+        self.search_time = time.time()
+        self.search_reset = 3.0  # seconds
 
     "======================================================"
     "================= init functions ====================="
@@ -42,7 +47,8 @@ class _FolderGui:
                 'Open Folder plot': self.menu_folder_plot,
                 'Open file inspector': self.menu_file_gui,
                 'Open image GUI': self.menu_image_gui,
-                'Open dataset GUI': self.menu_namespace_gui
+                'Open dataset GUI': self.menu_namespace_gui,
+                'Open class GUI': self.menu_class_gui,
             },
             'Search': {
                 'Search for file': self.menu_search_file,
@@ -104,7 +110,7 @@ class _FolderGui:
 
     def menu_folder_files(self):
         filepath, folderpath = self.get_filepath()
-        HDFFolderFiles(folderpath, parent=self.root)
+        HDFFolderFiles([folderpath], parent=self.root)
 
     def menu_folder_plot(self):
         from .hdf_plot_gui import HDFFolderPlotViewer
@@ -141,6 +147,13 @@ class _FolderGui:
         else:
             HDFMapView(folderpath, parent=self.root)
 
+    def menu_class_gui(self):
+        filepath, folderpath = self.get_filepath()
+        if filepath:
+            NexusClassView(filepath, parent=self.root)
+        else:
+            NexusClassView(folderpath, parent=self.root)
+
     def menu_search_file(self):
         filepath, folderpath = self.get_filepath()
         HDFFileSearch(folderpath, parent=self.root)
@@ -170,6 +183,7 @@ class _FolderGui:
         m_file.add_command(label="open Plot", command=self.menu_plot_gui)
         m_file.add_command(label="open Image", command=self.menu_image_gui)
         m_file.add_command(label="open Namespace", command=self.menu_namespace_gui)
+        m_file.add_command(label="open Nexus Classes", command=self.menu_class_gui)
         # right-click menu - folder options
         m_folder = tk.Menu(frame, tearoff=0)
         m_folder.add_command(label="Copy", command=self.menu_copy_path)
@@ -214,6 +228,30 @@ class _FolderGui:
         # self.root.unbind_all('<KeyPress>')
         self.root.destroy()
 
+    def on_key_press(self, event):
+        """any key press performs search of folders, selects first matching folder"""
+        # return if clicked on entry box
+        # event.widget == self.tree
+        if str(event.widget).endswith('entry'):
+            return
+        # reset search str after reset time
+        ctime = time.time()
+        if ctime > self.search_time + self.search_reset:
+            self.search_str = ""
+        # update search time, add key to query
+        self.search_time = ctime
+        self.search_str += event.char
+
+        self.tree.selection_remove(self.tree.selection())
+        # search folder list
+        for branch in self.tree.get_children():  # folders
+            folder = self.tree.item(branch)['text']
+            if self.search_str in folder.lower():
+            # if folder.lower().startswith(self.search_str):
+                self.tree.selection_add(branch)
+                self.tree.see(branch)
+                break
+
     "======================================================"
     "================ button functions ===================="
     "======================================================"
@@ -244,13 +282,10 @@ class HDFFolderViewer(_FolderGui):
     """
 
     def __init__(self, initial_directory=None, parent=None):
-
+        super().__init__()
         self.root = create_root('HDF Folder Viewer', parent=parent)
 
         # Variables
-        self.search_str = ""
-        self.search_time = time.time()
-        self.search_reset = 3.0  # seconds
         self.filepath = tk.StringVar(self.root, os.path.abspath('.'))
         self.extension = tk.StringVar(self.root, EXTENSIONS[0])
         self.address = tk.StringVar(self.root, DEFAULT_ADDRESS)
@@ -278,12 +313,12 @@ class HDFFolderViewer(_FolderGui):
         self.tree['displaycolumns'] = ('modified', 'files', 'dataset')  # hide columns
         self.tree.bind("<<TreeviewOpen>>", self.tree_open)
         self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind('<KeyPress>', self.on_key_press)
 
         "-------------------------Start Mainloop------------------------------"
         if initial_directory:
             self.filepath.set(initial_directory)
         self._list_folders()
-        self.tree.bind_all('<KeyPress>', self.on_key_press)
         if parent is None:
             light_theme()
             self.root.mainloop()
@@ -442,29 +477,6 @@ class HDFFolderViewer(_FolderGui):
             self.filepath.set(os.path.abspath(os.path.join(self.filepath.get(), item['text'])))
             self._list_folders()
 
-    def on_key_press(self, event):
-        """any key press performs search of folders, selects first matching folder"""
-        # return if clicked on entry box
-        # event.widget == self.tree
-        if str(event.widget).endswith('entry'):
-            return
-        # reset search str after reset time
-        ctime = time.time()
-        if ctime > self.search_time + self.search_reset:
-            self.search_str = ""
-        # update search time, add key to query
-        self.search_time = ctime
-        self.search_str += event.char
-
-        self.tree.selection_remove(self.tree.selection())
-        # search folder list
-        for branch in self.tree.get_children():  # folders
-            folder = self.tree.item(branch)['text']
-            if folder.lower().startswith(self.search_str):
-                self.tree.selection_add(branch)
-                self.tree.see(branch)
-                break
-
     def fun_search(self, event=None):
         self.tree.selection_remove(self.tree.selection())
         query = self.search_box.get()
@@ -542,7 +554,7 @@ class HDFFolderFiles(_FolderGui):
     """
 
     def __init__(self, initial_directories=(), parent=None):
-
+        super().__init__()
         self.root = create_root('HDF Folder Viewer', parent=parent)
 
         # Variables
@@ -571,6 +583,7 @@ class HDFFolderFiles(_FolderGui):
         self.tree['displaycolumns'] = ("dataset",)  # hide filepath column
         self.tree.bind("<<TreeviewSelect>>", self.tree_select)
         self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind('<KeyPress>', self.on_key_press)
 
         "-------------------------Start Mainloop------------------------------"
         if initial_directories:
@@ -756,7 +769,7 @@ class HDFFileSearch(_FolderGui):
     """
 
     def __init__(self, initial_directory=None, parent=None):
-
+        super().__init__()
         self.root = create_root('HDF Folder Search', parent=parent)
 
         # Variables
@@ -778,6 +791,7 @@ class HDFFileSearch(_FolderGui):
         "----------- TreeView -----------"
         self.tree = self.ini_treeview()
         self.tree['displaycolumns'] = ('modified',)  # hide columns
+        self.tree.bind('<KeyPress>', self.on_key_press)
 
         "-------------------------Start Mainloop------------------------------"
         if initial_directory:

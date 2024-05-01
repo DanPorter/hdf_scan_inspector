@@ -1,5 +1,5 @@
 """
-HDF Scan Inspector - general functions
+HDF Scan Inspector - general functions for HDF files
 
 By Dan Porter
 Diamond Light Source Ltd
@@ -10,9 +10,10 @@ import os
 import ast
 import builtins
 import datetime
+import pathlib
+import typing
 import numpy as np
 import h5py
-from pathlib import Path
 
 try:
     import hdf5plugin  # required for compressed data
@@ -35,11 +36,11 @@ ishdf = h5py.is_hdf5
 "==========================================================================="
 
 
-def load_hdf(hdf_filename):
+def load_hdf(hdf_filename: str) -> h5py.File:
     return h5py.File(hdf_filename, 'r')
 
 
-def address_name(address):
+def address_name(address: str | bytes) -> str:
     """Convert hdf address to name"""
     if isinstance(address, bytes):
         address = address.decode('ascii')
@@ -48,11 +49,11 @@ def address_name(address):
     return os.path.basename(name) if name == 'value' else name
 
 
-def display_timestamp(timestamp):
+def display_timestamp(timestamp: float) -> str:
     return datetime.datetime.fromtimestamp(timestamp).strftime('%a %d-%b-%Y %H:%M')
 
 
-def list_files(folder_directory, extension='.nxs'):
+def list_files(folder_directory: str, extension='.nxs') -> list[str]:
     """Return list of files in directory with extension, returning list of full file paths"""
     # return [os.path.join(folder_directory, file) for file in os.listdir(folder_directory) if file.endswith(extension)]
     return sorted(
@@ -61,8 +62,14 @@ def list_files(folder_directory, extension='.nxs'):
     )
 
 
-def list_path_time_files(directory, extension='.nxs'):
-    """Return [(path, modified_time(s), nfiles), ]"""
+def list_path_time_files(directory: str, extension='.nxs') -> list[tuple[str, float, int]]:
+    """
+    Return list of folders in diectory, along with modified time and number of contained files
+        [(path, modified_time(s), nfiles), ...] = list_path_time_files('/folder/path', '.nxs')
+    :param directory: directory to look in
+    :param extension: file extension to list as nfiles
+    :return: [(path, timestamp, nfiles), ...]
+    """
     # folders = [
     #     (f.path, f.stat().st_mtime, len(list_files(f.path, extension)))
     #     for f in os.scandir(directory) if f.is_dir()
@@ -77,8 +84,16 @@ def list_path_time_files(directory, extension='.nxs'):
     return folders
 
 
-def get_hdf_value(hdf_filename, hdf_address, default_value=''):
-    """Open HDF file and return value from single dataset"""
+def get_hdf_value(hdf_filename: str, hdf_address: str, default_value: typing.Any = '') -> typing.Any:
+    """
+    Open HDF file and return value from single dataset
+    :param hdf_filename: str filename of hdf file
+    :param hdf_address: str hdf address specifier of dataset
+    :param default_value: Any - returned value if hdf_address is not available in file
+    :return [dataset is array]: str "{type} {shape}"
+    :return [dataset is not array]: output of dataset[()]
+    :return [dataset doesn't exist]: default_value
+    """
     try:
         with load_hdf(hdf_filename) as hdf:
             dataset = hdf.get(hdf_address)
@@ -90,15 +105,15 @@ def get_hdf_value(hdf_filename, hdf_address, default_value=''):
         return default_value
 
 
-def hdfobj_string(hdf_filename, address):
+def hdfobj_string(hdf_filename: str, hdf_address: str) -> str:
     """Generate string describing object in hdf file"""
     with load_hdf(hdf_filename) as hdf:
-        obj = hdf.get(address)
+        obj = hdf.get(hdf_address)
         try:
-            link = repr(hdf.get(address, getlink=True))
+            link = repr(hdf.get(hdf_address, getlink=True))
         except RuntimeError:
             link = 'No link'
-        myclass = hdf.get(address, getclass=True)
+        myclass = hdf.get(hdf_address, getclass=True)
         out = f"{obj.name}\n"
         out += f"{repr(obj)}\n"
         out += f"{link}\n"
@@ -115,7 +130,7 @@ def hdfobj_string(hdf_filename, address):
     return out
 
 
-def search_filename_in_folder(topdir, search_str="*.nxs", case_sensitive=False):
+def search_filename_in_folder(topdir: str, search_str: str = "*.nxs", case_sensitive: bool = False):
     """
     Search recursivley for filenames
     :param topdir: str address of directory to start in
@@ -123,37 +138,39 @@ def search_filename_in_folder(topdir, search_str="*.nxs", case_sensitive=False):
     :param case_sensitive:
     :return: list
     """
-    return [f.absolute() for f in Path(topdir).rglob(search_str, case_sensitive=case_sensitive)]
+    return [f.absolute() for f in pathlib.Path(topdir).rglob(search_str, case_sensitive=case_sensitive)]
 
 
-def search_hdf_files(topdir, search_str=None, extension=DEFAULT_EXTENSION, address=DEFAULT_ADDRESS,
-                     whole_word=False, case_sensitive=False):
+def search_hdf_files(topdir: str, search_str: str | None = None, extension: str = DEFAULT_EXTENSION,
+                     address: str = DEFAULT_ADDRESS, whole_word: bool = False,
+                     case_sensitive: bool = False) -> list[str]:
     """
     Search recurslively for hdf files in folder and check within files for dataset
     :param topdir: str address of directory to start in
     :param search_str: str or None, if None, returns any hdf file with this dataset
     :param extension: str extension of files, e.g. ".nxs"
     :param address: str dataset address to check
-    :param whole_word: Bool
-    :param case_sensitive:  Bool
+    :param whole_word: search for whole words only
+    :param case_sensitive: search is case-sensitive
     :return: list
     """
     output = []
     search_str = '' if search_str is None else search_str
     search_str = search_str if case_sensitive else search_str.lower()
 
-    for f in Path(topdir).rglob(f"*{extension}"):
+    for f in pathlib.Path(topdir).rglob(f"*{extension}"):
         if not h5py.is_hdf5(f):
             continue
-        with load_hdf(f) as hdf:
+        with load_hdf(f.name) as hdf:
             dataset = hdf.get(address)
             if dataset:
                 if search_str:
                     value = str(dataset[()]) if case_sensitive else str(dataset[()]).lower()
                     if (whole_word and search_str == value) or (search_str in value):
-                        output.append(f)
+                        output.append(f.name)
                 else:
-                    output.append(f)
+                    output.append(f.name)
+    return output
 
 
 "==========================================================================="
@@ -161,7 +178,7 @@ def search_hdf_files(topdir, search_str=None, extension=DEFAULT_EXTENSION, addre
 "==========================================================================="
 
 
-def dataset_shape(dataset):
+def dataset_shape(dataset: h5py.Dataset) -> tuple[int, int, int]:
     """
     Return 3D dataset shape, flattening any dimensions that aren't the last two
     :param dataset: HDF dataset object
@@ -171,7 +188,7 @@ def dataset_shape(dataset):
     return shape
 
 
-def get_image(dataset, image_number, axis=0):
+def get_image(dataset: h5py.Dataset, image_number: int, axis: int = 0) -> np.array:
     """
     Load a single image from a dataset, on a given axis
     Assumes the dataset is 3D
@@ -197,7 +214,7 @@ def get_image(dataset, image_number, axis=0):
     return dataset[index_slice].reshape(shape)
 
 
-def get_image_from_files(image_filenames, image_number, axis=0):
+def get_image_from_files(image_filenames: list[str], image_number: int, axis: int = 0) -> np.array:
     """
     Load a single image from a list of image files (e.g. .tif)
     :param image_filenames: list of str
@@ -215,7 +232,7 @@ def get_image_from_files(image_filenames, image_number, axis=0):
     return np.array([imread(f)[:, image_number] for f in image_filenames])
 
 
-def get_hdf_image(hdf_filename, address, image_number, axis=0):
+def get_hdf_image(hdf_filename: str, address: str, image_number: int, axis: int = 0) -> np.array:
     """
     Load a single image from a dataset in a HDF file, on a given axis
     :param hdf_filename: str filename of HDF file
@@ -230,11 +247,11 @@ def get_hdf_image(hdf_filename, address, image_number, axis=0):
     return image
 
 
-def get_hdf_array_value(hdf_filename, address, image_number):
+def get_hdf_array_value(hdf_filename: str, address: str, image_number: int) -> float | int:
     """
-    Load a single value from a dataset in a HDF file
+    Load a single value from a dataset in an HDF file
     :param hdf_filename: str filename of HDF file
-    :param address: str HDF address of 3D dataset
+    :param address: str HDF address of array dataset
     :param image_number: index of the dataset
     :return: float
     """
@@ -247,7 +264,7 @@ def get_hdf_array_value(hdf_filename, address, image_number):
     return 0
 
 
-def get_hdf_image_address(hdf_filename):
+def get_hdf_image_address(hdf_filename: str) -> str:
     """
     Return address of first 3D dataset in HDF file
     :param hdf_filename: str filename of hdf file
@@ -271,7 +288,7 @@ def get_hdf_image_address(hdf_filename):
     return image_address
 
 
-def check_image_dataset(hdf_filename, address):
+def check_image_dataset(hdf_filename: str, address: str) -> str:
     """
     Check dataset exists and is correct shape for image use
     :param hdf_filename: str filepath of HDF file
@@ -299,7 +316,28 @@ def check_image_dataset(hdf_filename, address):
 "==========================================================================="
 
 
-def map_hdf(hdf_file):
+class HdfMap:
+    """
+    HdfMap object, container for addresses of different objects in an HDF file
+        map = HdfMap()
+    map.groups = {}  # stores attributes of each group by address
+    map.classes = {}  # stores list of group addresses by nx_class
+    map.datasets = {}  # stores attributes of each dataset by address
+    map.arrays = {}  # stores array dataset addresses by name
+    map.values = {}  # stores value dataset addresses by name
+    map.image_data = {}  # stores dataset addresses of image data
+    """
+    def __init__(self):
+        self.groups = {}  # stores attributes of each group by address
+        self.classes = {}  # stores group addresses by nx_class
+        self.datasets = {}  # stores attributes of each dataset by address
+        self.arrays = {}  # stores array dataset addresses by name
+        self.values = {}  # stores value dataset addresses by name
+        self.combined = {}  # stores array and value addresses (arrays overwrite values)
+        self.image_data = {}  # stores dataset addresses of image data
+
+
+def map_hdf(hdf_file: h5py.File) -> HdfMap:
     """
     Create map of groups and datasets in HDF file
 
@@ -311,6 +349,10 @@ def map_hdf(hdf_file):
         eta_array_address = map.arrays['eta']
         detector_data_address = next(iter(map.image_data))
 
+    Special parameters:
+        map.arrays['axes'] << returns the address of the first default 'axes' attribute
+        map.arrays['signal'] << returns the address of the default 'signal' attribute
+
     :param hdf_file: hdf file object
     :return: HdfMap object with attributes:
         groups = {}  # stores attributes of each group by address
@@ -320,15 +362,6 @@ def map_hdf(hdf_file):
         values = {}  # stores value dataset addresses by name
         image_data = {}  # stores dataset addresses of image data
     """
-
-    class HdfMap:
-        groups = {}  # stores attributes of each group by address
-        classes = {}  # stores group addresses by nx_class
-        datasets = {}  # stores attributes of each dataset by address
-        arrays = {}  # stores array dataset addresses by name
-        values = {}  # stores value dataset addresses by name
-        combined = {}  # stores array and value addresses (arrays overwrite values)
-        image_data = {}  # stores dataset addresses of image data
     hdf_map = HdfMap()
 
     # Defaults
@@ -390,22 +423,22 @@ def map_hdf(hdf_file):
     return hdf_map
 
 
-def find_varnames(expression):
+def find_varnames(expression: str) -> list[str]:
     """Returns list of variable names in expression, ommiting builtins and globals"""
     # varnames = re.findall(r'[a-zA-Z]\w*', expression)
     return [node.id for node in ast.walk(ast.parse(expression, mode='eval'))
             if type(node) is ast.Name and node.id not in GLOBALS_NAMELIST]
 
 
-def generate_namespace(hdf_file, name_address, varnames=None, default=np.array('--')):
+def generate_namespace(hdf_file: h5py.File, name_address: dict[str, str], varnames: list[str] | None = None,
+                       default: typing.Any = np.array('--')) -> dict[str, typing.Any]:
     """
     Generate namespace dict
 
     Adds additional values if not in name_address dict:
         filename: str, name of hdf_file
         filepath: str, full path of hdf_file
-        axes_address: str hdf address of default axes
-        signal_address: str hdf address of default signal
+        _*name*: str hdf address of *name*
 
     :param hdf_file: hdf file object
     :param name_address: dict[varname]='hdfaddress'
@@ -417,17 +450,16 @@ def generate_namespace(hdf_file, name_address, varnames=None, default=np.array('
         varnames = list(name_address.keys())
     namespace = {name: hdf_file[name_address[name]][()] for name in varnames if name in name_address}
     defaults = {name: default for name in varnames if name not in name_address}
+    addresses = {'_' + name: name_address[name] for name in varnames if name in name_address}
     # add extra params
     extras = {
         'filepath': hdf_file.filename if hasattr(hdf_file, 'filename') else 'unknown',
-        'filename': address_name(hdf_file.filename) if hasattr(hdf_file, 'filename') else 'unknown',
-        'axes_address': name_address['axes'] if 'axes' in name_address else 'None',
-        'signal_address': name_address['signal'] if 'signal' in name_address else 'None'
+        'filename': os.path.basename(hdf_file.filename) if hasattr(hdf_file, 'filename') else 'unknown',
     }
-    return {**defaults, **extras, **namespace}
+    return {**defaults, **extras, **addresses, **namespace}
 
 
-def eval_hdf(hdf_file, expression, file_map=None, debug=False):
+def eval_hdf(hdf_file: h5py.File, expression: str, file_map: HdfMap | None = None, debug: bool = False) -> typing.Any:
     """
     Evaluate an expression using the namespace of the hdf file
     :param hdf_file: hdf file object
@@ -449,20 +481,20 @@ def eval_hdf(hdf_file, expression, file_map=None, debug=False):
     return eval(expression, GLOBALS, namespace)
 
 
-def format_hdf(hdf_file, expression, file_map=None, debug=False):
+def format_hdf(hdf_file, expression, file_map: HdfMap | None = None, debug: bool = False) -> str:
     """
     Evaluate a formatted string expression using the namespace of the hdf file
     :param hdf_file: hdf file object
     :param expression: str expression using {name} format specifiers
     :param file_map: HdfMap object from map_hdf()
     :param debug: bool, if True, returns additional info
-    :return: expression.format(**namespace)
+    :return: eval_hdf(f"expression")
     """
     expression = 'f"""' + expression + '"""'  # convert to fstr
     return eval_hdf(hdf_file, expression, file_map, debug)
 
 
-def check_naughty_eval(eval_str):
+def check_naughty_eval(eval_str: str) -> None:
     """
     Check str for naughty eval arguments such as os or import
     This is not foolproof.
@@ -480,7 +512,7 @@ def check_naughty_eval(eval_str):
 "==========================================================================="
 
 
-def get_nexus_axes_datasets(hdf_object):
+def get_nexus_axes_datasets(hdf_object: h5py.File) -> tuple[list[h5py.Dataset], h5py.Dataset]:
     """
     Nexus compliant method of finding default plotting axes in hdf files
      - find "default" entry group in top File group
@@ -511,7 +543,7 @@ def get_nexus_axes_datasets(hdf_object):
     return axes_datasets, signal_dataset
 
 
-def get_strict_nexus_axes_datasets(hdf_object):
+def get_strict_nexus_axes_datasets(hdf_object: h5py.File) -> tuple[list[h5py.Dataset], h5py.Dataset]:
     """
     Nexus compliant method of finding default plotting axes in hdf files
      - find "default" entry group in top File group
@@ -540,7 +572,7 @@ def get_strict_nexus_axes_datasets(hdf_object):
     return axes_datasets, signal_dataset
 
 
-def get_nexus_axes_address(hdf_filename):
+def get_nexus_axes_address(hdf_filename: str) -> tuple[str, str]:
     """
     Open a NeXus compliant file and return the default plot axes
     :param hdf_filename: str filename of hdf file
