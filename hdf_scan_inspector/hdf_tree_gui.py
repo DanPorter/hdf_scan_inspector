@@ -291,9 +291,9 @@ class HDFViewer:
         text = tk.Text(frm, wrap=tk.NONE, width=50)
         text.pack(fill=tk.BOTH, expand=tk.YES)
 
-        var = tk.Scrollbar(frm, orient=tk.HORIZONTAL)
+        var = tk.Scrollbar(frm, orient=tk.HORIZONTAL, command=text.xview)
         var.pack(side=tk.BOTTOM, fill=tk.X)
-        var.config(command=text.xview)
+        text.configure(xscrollcommand=var.set)
 
         return tree, text
 

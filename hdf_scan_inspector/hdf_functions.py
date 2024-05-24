@@ -21,6 +21,7 @@ except ImportError:
     print('Warning: hdf5plugin not available.')
 
 # parameters
+SEP = '/'  # HDF address separator
 DEFAULT_ADDRESS = "entry1/scan_command"
 EXTENSIONS = ['.nxs', '.hdf', '.hdf5', '.h5']
 DEFAULT_EXTENSION = EXTENSIONS[0]
@@ -42,11 +43,11 @@ def load_hdf(hdf_filename: str) -> h5py.File:
 
 def address_name(address: str | bytes) -> str:
     """Convert hdf address to name"""
-    if isinstance(address, bytes):
+    if hasattr(address, 'decode'):  # Byte string
         address = address.decode('ascii')
     address = address.replace('.', '_')  # remove dots as cant be evaluated
-    name = os.path.basename(address)
-    return os.path.basename(name) if name == 'value' else name
+    name = address.split(SEP)[-1]
+    return address.split(SEP)[-1] if name == 'value' else name
 
 
 def display_timestamp(timestamp: float) -> str:
@@ -101,7 +102,7 @@ def get_hdf_value(hdf_filename: str, hdf_address: str, default_value: typing.Any
                 if dataset.size > 1:
                     return f"{dataset.dtype} {dataset.shape}"
                 return dataset[()]
-    finally:
+    except Exception:
         return default_value
 
 
@@ -378,7 +379,7 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
         for key in hdf_group:
             obj = hdf_group.get(key)
             link = hdf_group.get(key, getlink=True)
-            address = top_address + '/' + key
+            address = top_address + SEP + key  # build hdf address - a cross-file unique identifier
             name = address_name(address)
             altname = address_name(obj.attrs['local_name']) if 'local_name' in obj.attrs else name
 

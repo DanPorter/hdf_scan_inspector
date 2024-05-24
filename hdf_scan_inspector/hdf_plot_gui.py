@@ -176,8 +176,15 @@ class HDFFolderPlotViewer:
         tree.bind("<<TreeviewSelect>>", lambda event: self.file_select())
         tree.bind("<Double-1>", self.tree_double_click)
 
+        def copy_address():
+            for iid in tree.selection():
+                frm.master.clipboard_clear()
+                frm.master.clipboard_append(tree.item(iid)["values"][1])
+
         # right-click menu
         m = tk.Menu(frame, tearoff=0)
+        m.add_command(label="Copy path", command=copy_address)
+        m.add_separator()
         m.add_command(label="open Treeview", command=self.menu_file_gui)
         m.add_command(label="open Plot", command=self.menu_plot_gui)
         m.add_command(label="open Image", command=self.menu_image_gui)
@@ -317,15 +324,16 @@ class HDFFolderPlotViewer:
         return []
 
     def _add_files(self, filepath_list: list[str], index: tk.END):
+        current_files = [self.file_list.item(ii)['text'] for ii in self.file_list.get_children()]
         for filepath in filepath_list:
+            if os.path.basename(filepath) in current_files:
+                continue
             self.file_list.insert("", index, text=os.path.basename(filepath), values=('', filepath))
 
     def populate_file_list(self, filepath_list: list[str]):
         """list files in file list tree, from top down."""
         self._add_files(filepath_list[:MAX_FILELIST_LOAD], tk.END)
-        print(filepath_list[:MAX_FILELIST_LOAD])
         if len(filepath_list) > MAX_FILELIST_LOAD:
-            print(filepath_list[MAX_FILELIST_LOAD:])
             thread = threading.Thread(target=self._add_files, args=(filepath_list[MAX_FILELIST_LOAD:], tk.END))
             thread.start()
             self.active_threads.append(thread)
