@@ -1,7 +1,6 @@
 h5py
-sv-ttk
+#sv-ttk
 setuptools
-future
 numpy
 imageio
 matplotlib
