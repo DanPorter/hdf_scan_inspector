@@ -25,6 +25,10 @@ SEP = '/'  # HDF address separator
 DEFAULT_ADDRESS = "entry1/scan_command"
 EXTENSIONS = ['.nxs', '.hdf', '.hdf5', '.h5']
 DEFAULT_EXTENSION = EXTENSIONS[0]
+NX_LOCALNAME = 'local_name'
+NX_SCAN_SHAPE_ADDRESS = 'entry1/scan_shape'
+NX_SIGNAL = 'signal'
+NX_AXES = 'axes'
 MAX_TEXTVIEW_SIZE = 1000
 # parameters for eval
 GLOBALS = {'np': np}
@@ -317,6 +321,215 @@ def check_image_dataset(hdf_filename: str, address: str) -> str:
 "==========================================================================="
 
 
+class HdfMap2:
+    """
+    HdfMap object, container for addresses of different objects in an HDF file
+        map = HdfMap(hdf_obj)
+
+    *** HdfMap Attributes ***
+    map.groups = {}  # stores attributes of each group by address
+    map.classes = {}  # stores list of group addresses by nx_class
+    map.datasets = {}  # stores attributes of each dataset by address
+    map.arrays = {}  # stores array dataset addresses by name
+    map.scannalbes = {}  # stores dataset addresses by name, where each dataset is the same size
+    map.values = {}  # stores value dataset addresses by name
+    map.image_data = {}  # stores dataset addresses of image data
+
+    *** HdfMap Functions ***
+    map.get_size('name' | 'address') -> returns size of dataset
+    map.get_shape('name' | 'address') -> returns shape of dataset
+    map.get_attrs('name' | 'address') -> returns dict of attributes of dataset
+    map.get_attr('name' | 'address', attr_name) -> returns attribute of dataset
+    map.get_class('NXclass') -> returns address of first HDFGroup with NXclass attribute
+    map.get_class_datasets('NXclass') -> returns list of dataset addresses of first HDFGroup with NXclass attribute
+
+    *** HdfMap Value Functions ***
+    map.get(hdf_obj, 'name') -> returns value from dataset associated with 'name'
+    map.eval(hdf_obj, 'expression') -> evaluates expresion using namespace
+    map.format(hdf_obj, '{expression}') -> evaluates str format expression using namespace
+    """
+    _debug = False
+
+    def __init__(self, hdf_file: h5py.File):
+        self._filename = hdf_file.filename
+        self._debuglog = lambda message: None
+        self.groups = {}  # stores attributes of each group by address
+        self.classes = {}  # stores group addresses by nx_class
+        self.datasets = {}  # stores attributes of each dataset by address
+        self.arrays = {}  # stores array dataset addresses by name
+        self.values = {}  # stores value dataset addresses by name
+        self.scannables = {}  # stores array dataset addresses with given size, by name
+        self.combined = {}  # stores array and value addresses (arrays overwrite values)
+        self.image_data = {}  # stores dataset addresses of image data
+
+        # map file
+        self._populate(hdf_file)
+        # Genereate additional attributes
+        self.generate_scannables(self.most_common_size())
+
+    def __repr__(self):
+        return f"HdfMap('{self._filename}')"
+
+    def debug(self, state=True):
+        """Turn debugging on"""
+        self._debug = state
+        if self._debug:
+            self._debuglog = lambda message: print(message)
+        else:
+            self._debuglog = lambda message: None
+
+    def _load_defaults(self, hdf_file):
+        """Load Nexus default axes and signal"""
+        try:
+            axes_datasets, signal_dataset = get_nexus_axes_datasets(hdf_file)
+            if axes_datasets[0].name in hdf_file:
+                self.arrays[NX_AXES] = axes_datasets[0].name
+                self._debuglog(f"DEFAULT axes: {axes_datasets[0].name}")
+            if signal_dataset.name in hdf_file:
+                self.arrays[NX_SIGNAL] = signal_dataset.name
+                self._debuglog(f"DEFAULT signal: {signal_dataset.name}")
+        except KeyError:
+            pass
+
+    def _populate(self, hdf_group: h5py.Group, top_address: str = '') -> None:
+        for key in hdf_group:
+            obj = hdf_group.get(key)
+            link = hdf_group.get(key, getlink=True)
+            address = top_address + SEP + key  # build hdf address - a cross-file unique identifier
+            name = address_name(address)
+            altname = address_name(obj.attrs['local_name']) if 'local_name' in obj.attrs else name
+            self._debuglog(f"{address}  {name}, altname={altname}, link={repr(link)}")
+
+            # Group
+            if isinstance(obj, h5py.Group):
+                try:
+                    nx_class = obj.attrs['NX_class'].decode() if 'NX_class' in obj.attrs else 'Group'
+                except AttributeError:
+                    nx_class = obj.attrs['NX_class']
+                except OSError:
+                    nx_class = 'Group'  # if object doesn't have attrs
+                self.groups[address] = (nx_class, name)
+                if nx_class not in self.classes:
+                    self.classes[nx_class] = [address]
+                else:
+                    self.classes[nx_class].append(address)
+                self._debuglog(f"{address}  HDFGroup: {nx_class}")
+                self._populate(obj, address)
+
+            # Dataset
+            elif isinstance(obj, h5py.Dataset) and not isinstance(link, h5py.SoftLink):
+                self.datasets[address] = (name, obj.size, obj.shape, dict(obj.attrs))
+                if obj.ndim >= 3:
+                    self.image_data[address] = (name, obj.size, obj.shape, dict(obj.attrs))
+                    self.arrays[name] = address
+                    self.arrays[altname] = address
+                    self._debuglog(f"{address}  HDFDataset: image_data & array {name, obj.size, obj.shape}")
+                elif obj.ndim > 0:
+                    self.arrays[name] = address
+                    self.arrays[altname] = address
+                    self._debuglog(f"{address}  HDFDataset: array {name, obj.size, obj.shape}")
+                else:
+                    self.values[name] = address
+                    self.values[altname] = address
+                    self._debuglog(f"{address}  HDFDataset: value")
+
+    def most_common_size(self) -> int:
+        """Return most common array size > 1"""
+        array_sizes = [
+            self.datasets[address][1]
+            for name, address in self.arrays.items()
+            if self.datasets[address][1] > 1
+        ]
+        return max(set(array_sizes), key=array_sizes.count)
+
+    def most_common_shape(self) -> tuple:
+        """Return most common non-singular array shape"""
+        array_shapes = [
+            self.datasets[address][2]
+            for name, address in self.arrays.items()
+            if len(self.datasets[address][2]) > 0
+        ]
+        return max(set(array_shapes), key=array_shapes.count)
+
+    def generate_scannables(self, array_size) -> None:
+        """Populate self.scannables field with datasets size that match array_size"""
+        self.scannables = {k: v for k, v in self.arrays.items() if self.datasets[v][1] == array_size}
+        # create combined dict, scannables and arrays overwrite values with same name
+        self.combined = {**self.values, **self.arrays, **self.scannables}
+
+    def _get_dataset(self, name_or_address: str, idx: int):
+        """Return attribute of dataset"""
+        if name_or_address in self.datasets:
+            return self.datasets[name_or_address][idx]
+        if name_or_address in self.combined:
+            return self.datasets[self.combined[name_or_address]][idx]
+
+    def get_size(self, name_or_address: str) -> int:
+        """Return size of dataset"""
+        return self._get_dataset(name_or_address, 1)
+
+    def get_shape(self, name_or_address: str) -> tuple:
+        """Return shape of dataset"""
+        return self._get_dataset(name_or_address, 2)
+
+    def get_attrs(self, name_or_address: str) -> dict:
+        """Return attributes of dataset"""
+        return self._get_dataset(name_or_address, 3)
+
+    def get_attr(self, name_or_address: str, attr_label: str, default: str = '') -> str:
+        """Return named attribute from dataset, or default"""
+        attrs = self.get_attrs(name_or_address)
+        if attr_label in attrs:
+            return attrs[attr_label]
+        return default
+
+    def get_class(self, nx_class: str) -> str | None:
+        """Return HDF address of first group with nx_class attribute"""
+        if nx_class in self.classes:
+            return self.classes[nx_class][0]
+
+    def get_class_datasets(self, nx_class: str) -> list[str] | None:
+        """Return list of HDF dataset addresses from first group with nx_class attribute"""
+        class_address = self.get_class(nx_class)
+        if class_address:
+            return [address for address in self.datasets if address.startswith(class_address)]
+
+    def get(self, hdf_file: h5py.File, name_or_address: str, default: typing.Any = None) -> typing.Any:
+        """
+        Evaluate an expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param name_or_address: str name of dataset
+        :param default: if name not in self.combined, return default
+        :return: hdf[dataset/address/name][()]
+        """
+        if name_or_address in self.datasets:
+            return hdf_file[name_or_address][()]
+        if name_or_address in self.combined:
+            address = self.combined[name_or_address]
+            return hdf_file[address][()]
+        return default
+
+    def eval(self, hdf_file: h5py.File, expression: str, debug: bool = False) -> typing.Any:
+        """
+        Evaluate an expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param expression: str expression to be evaluated
+        :param debug: bool, if True, returns additional info
+        :return: eval(expression)
+        """
+        return eval_hdf(hdf_file, expression, self, debug=debug)
+
+    def format(self, hdf_file: h5py.File, expression: str, debug: bool = False) -> str:
+        """
+        Evaluate a formatted string expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param expression: str expression using {name} format specifiers
+        :param debug: bool, if True, returns additional info
+        :return: eval_hdf(f"expression")
+        """
+        return format_hdf(hdf_file, expression, self, debug=debug)
+
+
 class HdfMap:
     """
     HdfMap object, container for addresses of different objects in an HDF file
@@ -325,6 +538,7 @@ class HdfMap:
     map.classes = {}  # stores list of group addresses by nx_class
     map.datasets = {}  # stores attributes of each dataset by address
     map.arrays = {}  # stores array dataset addresses by name
+    map.scannalbes = {}  # stores dataset addresses by name, where each dataset is the same size
     map.values = {}  # stores value dataset addresses by name
     map.image_data = {}  # stores dataset addresses of image data
     """
@@ -337,8 +551,41 @@ class HdfMap:
         self.combined = {}  # stores array and value addresses (arrays overwrite values)
         self.image_data = {}  # stores dataset addresses of image data
 
+    def get(self, hdf_file: h5py.File, name: str, default: typing.Any = None) -> typing.Any:
+        """
+        Evaluate an expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param name: str name of dataset
+        :param default: if name not in self.combined, return default
+        :return: hdf[dataset/address/name][()]
+        """
+        if name in self.combined:
+            address = self.combined[name]
+            return hdf_file[address][()]
+        return default
 
-def map_hdf(hdf_file: h5py.File) -> HdfMap:
+    def eval(self, hdf_file: h5py.File, expression: str, debug: bool = False) -> typing.Any:
+        """
+        Evaluate an expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param expression: str expression to be evaluated
+        :param debug: bool, if True, returns additional info
+        :return: eval(expression)
+        """
+        return eval_hdf(hdf_file, expression, self, debug=debug)
+
+    def format(self, hdf_file: h5py.File, expression: str, debug: bool = False) -> str:
+        """
+        Evaluate a formatted string expression using the namespace of the hdf file
+        :param hdf_file: hdf file object
+        :param expression: str expression using {name} format specifiers
+        :param debug: bool, if True, returns additional info
+        :return: eval_hdf(f"expression")
+        """
+        return format_hdf(hdf_file, expression, self, debug=debug)
+
+
+def map_hdf(hdf_file: h5py.File, debug: bool = False) -> HdfMap:
     """
     Create map of groups and datasets in HDF file
 
@@ -354,7 +601,13 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
         map.arrays['axes'] << returns the address of the first default 'axes' attribute
         map.arrays['signal'] << returns the address of the default 'signal' attribute
 
+    Arrays:
+        map.arrays = {'name': 'hdf_address'}
+        map.arrays is populated by hdf datasets addresses with >0 dimensions and
+        a length equal to the most common dataset.size in the file
+
     :param hdf_file: hdf file object
+    :param debug: prints debugging if True
     :return: HdfMap object with attributes:
         groups = {}  # stores attributes of each group by address
         classes = {}  # stores list of group addresses by nx_class
@@ -365,13 +618,23 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
     """
     hdf_map = HdfMap()
 
+    # Debugging
+    if debug:
+        def debuglog(message):
+            print(message)
+    else:
+        def debuglog(message):
+            pass
+
     # Defaults
     try:
         axes_datasets, signal_dataset = get_nexus_axes_datasets(hdf_file)
         if axes_datasets[0].name in hdf_file:
-            hdf_map.arrays['axes'] = axes_datasets[0].name
+            hdf_map.arrays[NX_AXES] = axes_datasets[0].name
+            debuglog(f"DEFAULT axes: {axes_datasets[0].name}")
         if signal_dataset.name in hdf_file:
-            hdf_map.arrays['signal'] = signal_dataset.name
+            hdf_map.arrays[NX_SIGNAL] = signal_dataset.name
+            debuglog(f"DEFAULT signal: {signal_dataset.name}")
     except KeyError:
         pass
 
@@ -382,6 +645,7 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
             address = top_address + SEP + key  # build hdf address - a cross-file unique identifier
             name = address_name(address)
             altname = address_name(obj.attrs['local_name']) if 'local_name' in obj.attrs else name
+            debuglog(f"{address}  {name}, altname={altname}, link={repr(link)}")
 
             # Group
             if isinstance(obj, h5py.Group):
@@ -396,6 +660,7 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
                     hdf_map.classes[nx_class] = [address]
                 else:
                     hdf_map.classes[nx_class].append(address)
+                debuglog(f"{address}  HDFGroup: {nx_class}")
                 recur_func(obj, address)
 
             # Dataset
@@ -405,12 +670,15 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
                     hdf_map.image_data[address] = (name, obj.size, obj.shape, dict(obj.attrs))
                     hdf_map.arrays[name] = address
                     hdf_map.arrays[altname] = address
+                    debuglog(f"{address}  HDFDataset: image_data & array {name, obj.size, obj.shape}")
                 elif obj.ndim > 0:
                     hdf_map.arrays[name] = address
                     hdf_map.arrays[altname] = address
+                    debuglog(f"{address}  HDFDataset: array {name, obj.size, obj.shape}")
                 else:
                     hdf_map.values[name] = address
                     hdf_map.values[altname] = address
+                    debuglog(f"{address}  HDFDataset: value")
 
     # map file
     recur_func(hdf_file)
@@ -418,9 +686,9 @@ def map_hdf(hdf_file: h5py.File) -> HdfMap:
     array_sizes = [hdf_map.datasets[v][1] for k, v in hdf_map.arrays.items()]
     max_array = max(set(array_sizes), key=array_sizes.count)
     # max_array = max(hdf_map.datasets[v][1] for k, v in hdf_map.arrays.items())
-    hdf_map.arrays = {k: v for k, v in hdf_map.arrays.items() if hdf_map.datasets[v][1] == max_array}
-    # create combined dict, arrays overwrite values with same name
-    hdf_map.combined = {**hdf_map.values, **hdf_map.arrays}
+    hdf_map.scannables = {k: v for k, v in hdf_map.arrays.items() if hdf_map.datasets[v][1] == max_array}
+    # create combined dict, scannables and arrays overwrite values with same name
+    hdf_map.combined = {**hdf_map.values, **hdf_map.arrays, **hdf_map.scannables}
     return hdf_map
 
 
@@ -434,7 +702,7 @@ def find_varnames(expression: str) -> list[str]:
 def generate_namespace(hdf_file: h5py.File, name_address: dict[str, str], varnames: list[str] | None = None,
                        default: typing.Any = np.array('--')) -> dict[str, typing.Any]:
     """
-    Generate namespace dict
+    Generate namespace dict - create a dictionary linking the name of a dataset to the dataset value
 
     Adds additional values if not in name_address dict:
         filename: str, name of hdf_file
@@ -445,7 +713,7 @@ def generate_namespace(hdf_file: h5py.File, name_address: dict[str, str], varnam
     :param name_address: dict[varname]='hdfaddress'
     :param varnames: list of str or None, if None, use generate all items in name_address
     :param default: any, if varname not in name_address - return default instead
-    :return:
+    :return: dict {'name': value, '_name': '/hdf/address'}
     """
     if varnames is None:
         varnames = list(name_address.keys())
@@ -482,7 +750,7 @@ def eval_hdf(hdf_file: h5py.File, expression: str, file_map: HdfMap | None = Non
     return eval(expression, GLOBALS, namespace)
 
 
-def format_hdf(hdf_file, expression, file_map: HdfMap | None = None, debug: bool = False) -> str:
+def format_hdf(hdf_file: h5py.File, expression: str, file_map: HdfMap | None = None, debug: bool = False) -> str:
     """
     Evaluate a formatted string expression using the namespace of the hdf file
     :param hdf_file: hdf file object

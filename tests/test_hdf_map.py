@@ -11,7 +11,7 @@ f3 = r"C:\Users\grp66007\OneDrive - Diamond Light Source Ltd\I16\Nexus_Format\I1
 
 print(f'\nFile1: {f}')
 with h5py.File(f, 'r') as hdf:
-    m = fn.map_hdf(hdf)
+    m = fn.map_hdf(hdf, True)
     out = fn.eval_hdf(hdf, 'np.sum(h)*a', file_map=m, debug=True)
     out2 = fn.eval_hdf(hdf, 'sum(total)', file_map=m, debug=True)
 
