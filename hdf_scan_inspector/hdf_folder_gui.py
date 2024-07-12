@@ -14,8 +14,8 @@ from tkinter import filedialog
 from threading import Thread
 
 from hdf_scan_inspector.hdf_functions import EXTENSIONS, DEFAULT_ADDRESS, address_name, \
-    list_files, get_hdf_value, list_path_time_files, display_timestamp
-from hdf_scan_inspector.hdf_functions import search_filename_in_folder, search_hdf_files
+    list_files, get_hdf_value, display_timestamp, list_path_time
+from hdf_scan_inspector.hdf_functions import search_filename_in_folder
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree, select_folder
 from hdf_scan_inspector.tk_functions import light_theme, dark_theme, treeview_sort_column
 from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector, NexusClassView
@@ -33,6 +33,7 @@ class _FolderGui:
         self.search_str = ""
         self.search_time = time.time()
         self.search_reset = 3.0  # seconds
+        self._prev_folder = ''
 
     "======================================================"
     "================= init functions ====================="
@@ -257,11 +258,17 @@ class _FolderGui:
     "======================================================"
 
     def browse_folder(self):
+        self._prev_folder = self.filepath.get()
         folder_directory = select_folder(parent=self.root)
         if folder_directory:
             self.filepath.set(folder_directory)
 
+    def back_folder(self):
+        if self._prev_folder:
+            self.filepath.set(self._prev_folder)
+
     def up_folder(self):
+        self._prev_folder = self.filepath.get()
         self.filepath.set(os.path.abspath(os.path.join(self.filepath.get(), '..')))
 
 
@@ -332,6 +339,8 @@ class HDFFolderViewer(_FolderGui):
         frm.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
 
         var = ttk.Button(frm, text='Browse', command=self.browse_folder, width=8)
+        var.pack(side=tk.LEFT)
+        var = ttk.Button(frm, text=u'\u2bc7', command=self.back_folder)
         var.pack(side=tk.LEFT)
         var = ttk.Button(frm, text=u'\u2191', command=self.up_folder)
         var.pack(side=tk.LEFT)
@@ -414,6 +423,10 @@ class HDFFolderViewer(_FolderGui):
         super().browse_folder()
         self._list_folders()
 
+    def back_folder(self):
+        super().back_folder()
+        self._list_folders()
+
     def up_folder(self):
         super().up_folder()
         self._list_folders()
@@ -474,6 +487,7 @@ class HDFFolderViewer(_FolderGui):
                 HDFImageViewer(hdf_filename, parent=self.root)
         else:
             # item is a folder, open folder
+            self._prev_folder = self.filepath.get()
             self.filepath.set(os.path.abspath(os.path.join(self.filepath.get(), item['text'])))
             self._list_folders()
 
@@ -504,20 +518,35 @@ class HDFFolderViewer(_FolderGui):
     "======================================================"
 
     def _list_folders(self, event=None):
-        name_time_nfiles = list_path_time_files(self.filepath.get(), self.extension.get())
+        path_time = list_path_time(self.filepath.get())
         self._delete_tree()
         # ('modified', 'modified_time', 'files', 'dataset', 'filepath')
         self.tree.insert("", tk.END, text="..", values=('', '', '', '', ''))
         hide_hidden = not self.show_hidden.get()
-        for name, mtime, nfiles in name_time_nfiles:
-            name_str = os.path.basename(name)
-            if hide_hidden and (name_str.startswith('.') or name_str.startswith('_')):
+        for path, mtime in path_time:
+            name_str = os.path.basename(path)
+            if hide_hidden and name_str != '.' and (name_str.startswith('.') or name_str.startswith('_')):
                 continue
             time_str = display_timestamp(mtime)
-            entry = self.tree.insert("", tk.END, text=name_str, values=(time_str, mtime, nfiles, '', name))
+            self.tree.insert("", tk.END, text=name_str, values=(time_str, mtime, '', '', path))
+        self._thread_update_folder_nfiles()
+
+    def _update_folder_nfiles(self, event=None):
+        """Update the number of files in each directory, as a seperate process"""
+        directory = self.filepath.get()
+        extension = self.extension.get()
+        for branch in self.tree.get_children():  # folders
+            folder = os.path.join(directory, self.tree.item(branch)['text'])
+            nfiles = len(list_files(folder, extension=extension))
+            self.tree.set(branch, 'files', nfiles)
             if nfiles > 0:  # add subdirectory for files
-                self.tree.insert(entry, tk.END)  # empty
-                self.tree.item(entry, open=False)
+                self.tree.insert(branch, tk.END)  # empty
+                self.tree.item(branch, open=False)
+
+    def _thread_update_folder_nfiles(self, event=None):
+        """Start new thread process to get dataset values"""
+        th = Thread(target=self._update_folder_nfiles)
+        th.start()  # will run until complete, may error if TreeView is destroyed
 
     def _update_datasets(self, event=None):
         """Update dataset values column for hdf files under open folders"""

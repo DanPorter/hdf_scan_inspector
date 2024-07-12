@@ -61,10 +61,30 @@ def display_timestamp(timestamp: float) -> str:
 def list_files(folder_directory: str, extension='.nxs') -> list[str]:
     """Return list of files in directory with extension, returning list of full file paths"""
     # return [os.path.join(folder_directory, file) for file in os.listdir(folder_directory) if file.endswith(extension)]
-    return sorted(
-        (file.path for file in os.scandir(folder_directory) if file.is_file() and file.name.endswith(extension)),
-        key=lambda x: os.path.getmtime(x)
-    )
+    try:
+        return sorted(
+            (file.path for file in os.scandir(folder_directory) if file.is_file() and file.name.endswith(extension)),
+            key=lambda x: os.path.getmtime(x)
+        )
+    except (FileNotFoundError, PermissionError, OSError):
+        return []
+
+
+def list_path_time(directory: str) -> list[tuple[str, float]]:
+    """
+    Return list of folders in diectory, along with modified time
+        [(path, modified_time(s), nfiles), ...] = list_path_time_files('/folder/path', '.nxs')
+    :param directory: directory to look in
+    :return: [(path, timestamp), ...]
+    """
+    folders = [('.', os.stat(directory).st_mtime)]
+    for f in os.scandir(directory):
+        if f.is_dir():
+            try:
+                folders.append((f.path, f.stat().st_mtime))
+            except PermissionError or FileNotFoundError:
+                pass
+    return folders
 
 
 def list_path_time_files(directory: str, extension='.nxs') -> list[tuple[str, float, int]]:
@@ -79,7 +99,7 @@ def list_path_time_files(directory: str, extension='.nxs') -> list[tuple[str, fl
     #     (f.path, f.stat().st_mtime, len(list_files(f.path, extension)))
     #     for f in os.scandir(directory) if f.is_dir()
     # ]  # this version might be slightly faster but doesn't handle permission errors
-    folders = []
+    folders = [('.', os.stat(directory).st_mtime, len(list_files(directory, extension)))]
     for f in os.scandir(directory):
         if f.is_dir():
             try:
