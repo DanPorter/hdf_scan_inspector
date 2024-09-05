@@ -17,7 +17,7 @@ from tkinter import ttk
 from hdf_scan_inspector.hdf_functions import EXTENSIONS, load_hdf, ishdf, address_name, eval_hdf, list_files, \
     format_hdf, map_hdf
 from hdf_scan_inspector.tk_functions import EditText, TEXTWIDTH, create_root, topmenu, select_folder, show_error
-from hdf_scan_inspector.tk_functions import select_hdf_file, light_theme, dark_theme
+from hdf_scan_inspector.tk_functions import select_hdf_file, light_theme, dark_theme, post_right_click_menu
 from hdf_scan_inspector.tk_matplotlib_functions import ini_plot
 from hdf_scan_inspector.hdf_tree_gui import HDFViewer, dataset_selector, HDFMapView
 
@@ -195,10 +195,7 @@ class HDFFolderPlotViewer:
             iid = tree.identify_row(event.y)
             if iid:
                 tree.selection_set(iid)
-                try:
-                    m.tk_popup(event.x_root, event.y_root)
-                finally:
-                    m.grab_release()
+                post_right_click_menu(m, event.x_root, event.y_root)
         tree.bind("<Button-3>", menu_popup)
         return tree
 
@@ -249,10 +246,7 @@ class HDFFolderPlotViewer:
         m.add_command(label="open Namespace", command=self.view_namespace)
 
         def menu_popup(event):
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
+            post_right_click_menu(m, event.x_root, event.y_root)
         text.bind("<Button-3>", menu_popup)
         return text, terminal
 
@@ -685,10 +679,7 @@ class HDFPlotViewer:
         m.add_command(label="open Namespace", command=self.view_namespace)
 
         def menu_popup(event):
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
+            post_right_click_menu(m, event.x_root, event.y_root)
         text.bind("<Button-3>", menu_popup)
         return text, terminal
 

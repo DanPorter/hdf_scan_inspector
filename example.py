@@ -8,5 +8,5 @@ Diamond Light Source Ltd
 
 from hdf_scan_inspector import HDFFolderViewer
 
-HDFFolderViewer(r"C:\Users\grp66007\OneDrive - Diamond Light Source Ltd\I16\Nexus_Format")
-#HDFFolderViewer("/dls/i16/data/2024")
+#HDFFolderViewer(r"C:\Users\grp66007\OneDrive - Diamond Light Source Ltd\I16\Nexus_Format")
+HDFFolderViewer("/dls/i16/data/2024")

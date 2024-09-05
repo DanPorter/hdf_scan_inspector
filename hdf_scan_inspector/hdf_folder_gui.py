@@ -14,10 +14,10 @@ from tkinter import filedialog
 from threading import Thread
 
 from hdf_scan_inspector.hdf_functions import EXTENSIONS, DEFAULT_ADDRESS, address_name, \
-    list_files, get_hdf_value, display_timestamp, list_path_time
+    list_files, get_hdf_value, display_timestamp, list_path_time, folder_summary
 from hdf_scan_inspector.hdf_functions import search_filename_in_folder
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree, select_folder
-from hdf_scan_inspector.tk_functions import light_theme, dark_theme, treeview_sort_column
+from hdf_scan_inspector.tk_functions import light_theme, dark_theme, treeview_sort_column, EditText, post_right_click_menu
 from hdf_scan_inspector.hdf_tree_gui import HDFViewer, HDFMapView, dataset_selector, NexusClassView
 
 COLUMNS = ('modified', 'modified_time', 'files', 'dataset', 'filepath')
@@ -118,6 +118,11 @@ class _FolderGui:
         filepath, folderpath = self.get_filepath()
         HDFFolderPlotViewer(folderpath, parent=self.root)
 
+    def menu_folder_summary(self):
+        filepath, folderpath = self.get_filepath()
+        summary = folder_summary(folderpath)
+        EditText(summary, self.root)
+
     def menu_file_gui(self):
         filepath, folderpath = self.get_filepath()
         if filepath:
@@ -190,6 +195,8 @@ class _FolderGui:
         m_folder.add_command(label="Copy", command=self.menu_copy_path)
         m_folder.add_command(label="Open Folder Datasets", command=self.menu_folder_files)
         m_folder.add_command(label="Open Folder Plots", command=self.menu_folder_plot)
+        # m_folder.add_command(label="Display Contents", command=self.menu_folder_plot)
+        m_folder.add_command(label="Display Summary", command=self.menu_folder_summary)
 
         def menu_popup(event):
             # select item
@@ -198,16 +205,10 @@ class _FolderGui:
                 tree.selection_set(iid)
                 filename, foldername = self.get_filepath()
                 if filename:
-                    try:
-                        m_file.tk_popup(event.x_root, event.y_root)
-                    finally:
-                        m_file.grab_release()
+                    menu = m_file
                 else:
-                    try:
-                        m_folder.tk_popup(event.x_root, event.y_root)
-                    finally:
-                        m_file.grab_release()
-
+                    menu = m_folder
+                post_right_click_menu(menu, event.x_root, event.y_root)
         return menu_popup
 
     "======================================================"
@@ -262,6 +263,10 @@ class _FolderGui:
         folder_directory = select_folder(parent=self.root)
         if folder_directory:
             self.filepath.set(folder_directory)
+
+    def home_folder(self):
+        self._prev_folder = self.filepath.get()
+        self.filepath.set(os.path.expanduser("~"))
 
     def back_folder(self):
         if self._prev_folder:
@@ -340,9 +345,11 @@ class HDFFolderViewer(_FolderGui):
 
         var = ttk.Button(frm, text='Browse', command=self.browse_folder, width=8)
         var.pack(side=tk.LEFT)
-        var = ttk.Button(frm, text=u'\u2bc7', command=self.back_folder)
+        var = ttk.Button(frm, text=u'\u2302', command=self.home_folder, width=3)
         var.pack(side=tk.LEFT)
-        var = ttk.Button(frm, text=u'\u2191', command=self.up_folder)
+        var = ttk.Button(frm, text=u'\u2190', command=self.back_folder, width=3)
+        var.pack(side=tk.LEFT)
+        var = ttk.Button(frm, text=u'\u2191', command=self.up_folder, width=3)
         var.pack(side=tk.LEFT)
         var = ttk.Entry(frm, textvariable=self.filepath)
         var.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
@@ -421,6 +428,10 @@ class HDFFolderViewer(_FolderGui):
 
     def browse_folder(self):
         super().browse_folder()
+        self._list_folders()
+
+    def home_folder(self):
+        super().home_folder()
         self._list_folders()
 
     def back_folder(self):

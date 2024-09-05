@@ -1,7 +1,7 @@
 """
 tkinter funcitons
 """
-
+import tkinter
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -124,6 +124,19 @@ def show_error(message, parent=None):
         parent=parent,
     )
     raise Exception(message)
+
+
+def post_right_click_menu(menu: tkinter.Menu, xpos: int, ypos: int):
+    """Post menu on arrow position"""
+
+    def destroy(evt):
+        menu.unpost()
+
+    try:
+        menu.bind('<FocusOut>', destroy)
+        menu.tk_popup(xpos, ypos)
+    finally:
+        menu.grab_release()
 
 
 "==========================================================================="

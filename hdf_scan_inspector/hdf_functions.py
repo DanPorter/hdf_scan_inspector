@@ -109,6 +109,28 @@ def list_path_time_files(directory: str, extension='.nxs') -> list[tuple[str, fl
     return folders
 
 
+def folder_summary(directory: str) -> str:
+    """Generate summary of folder"""
+    subdirs = list_path_time(directory)
+    if len(subdirs) > 50:
+        subdirs_str = f"{len(subdirs)-1} sub-directories"
+    else:
+        subdirs_str = '\n'.join(
+            f"  {os.path.basename(path):30}: {display_timestamp(time)}" for path, time in subdirs
+        )
+    allfiles = list_files(directory, '')
+    all_ext = {os.path.splitext(file)[-1] for file in allfiles}
+    file_types = '\n'.join(f"  {ext}: {len([file for file in allfiles if file.endswith(ext)])}" for ext in all_ext)
+    summary = (
+        f"Folder: {os.path.abspath(directory)}\n" +
+        f"Modified: {display_timestamp(os.stat(directory).st_mtime)}\n\n" +
+        f"Sub-Directories:\n{subdirs_str}\n" +
+        f"\nFiles: {len(allfiles)}\n"
+        f"File-types:\n{file_types}"
+    )
+    return summary
+
+
 def get_hdf_value(hdf_filename: str, hdf_address: str, default_value: typing.Any = '') -> typing.Any:
     """
     Open HDF file and return value from single dataset

@@ -29,7 +29,7 @@ from tkinter import ttk
 
 from hdf_scan_inspector.hdf_functions import load_hdf, address_name, eval_hdf, map_hdf, hdfobj_string
 from hdf_scan_inspector.tk_functions import create_root, topmenu, select_hdf_file, open_close_all_tree
-from hdf_scan_inspector.tk_functions import light_theme, dark_theme
+from hdf_scan_inspector.tk_functions import light_theme, dark_theme, post_right_click_menu
 
 
 def populate_tree(treeview, hdf_filename, openstate=True):
@@ -131,11 +131,7 @@ def right_click_menu(frame, tree):
         iid = tree.identify_row(event.y)
         if iid:
             tree.selection_set(iid)
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
-
+            post_right_click_menu(m, event.x_root, event.y_root)
     return menu_popup
 
 
